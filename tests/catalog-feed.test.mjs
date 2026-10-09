@@ -75,6 +75,28 @@ test("selection must be fully confirmed before saving; empty selection needs no 
   }
 });
 
+test("large selections are fully validated in bounded supplier batches", async () => {
+  const ids = Array.from({ length: 125 }, (_, index) => index + 1);
+  const batches = [];
+  await validateSelection(ids, async (request) => {
+    assert.equal(request.operation, "selection");
+    batches.push(request.ids);
+    return { ids: request.ids.toReversed() };
+  });
+  assert.deepEqual(batches.map((batch) => batch.length), [50, 50, 25]);
+  assert.deepEqual(batches.flat(), ids);
+  let calls = 0;
+  await assert.rejects(validateSelection(ids, async (request) => {
+    calls++;
+    return { ids: calls === 2 ? request.ids.slice(1) : request.ids };
+  }), /no longer published/);
+  assert.equal(calls, 2, "a later incomplete batch must not be accepted");
+  await assert.rejects(validateSelection(ids, async (request) => {
+    if (request.ids[0] > 50) throw new CatalogError("Supplier rate limit", 30);
+    return { ids: request.ids };
+  }), (error) => error instanceof CatalogError && error.retryAfter === 30);
+});
+
 test("restricted inventory transport accepts only bounded structured rate-limit failures", async (context) => {
   const previousHost = process.env.CATALOG_SSH_HOST;
   process.env.CATALOG_SSH_HOST = "127.0.0.1";

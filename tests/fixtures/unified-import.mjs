@@ -75,7 +75,7 @@ const server = await createServer({
       if (id.endsWith("/app/catalog.server.ts")) return `import {products} from "virtual:ux-state";
         export class CatalogError extends Error {}
         export async function validateSelection(){}
-        export async function productsPage(filters){let rows=products.filter(p=>!filters.search||p.name.includes(filters.search));if(filters.after_id)rows=rows.filter(p=>p.id>filters.after_id);return {products:rows.slice(0,2),has_more:rows.length>2,next_after_id:rows[1]?.id};}
+        export async function productsPage(filters){let rows=products.filter(p=>!filters.search||p.name.includes(filters.search));if(filters.after_id)rows=rows.filter(p=>p.id>filters.after_id);const page=rows.slice(0,50);return {products:page,has_more:rows.length>50,next_after_id:page.at(-1)?.id??filters.after_id??0};}
         export async function categoriesPage(){return {categories:[{id:1,name:"Fixture category"}],has_more:false};}`;
     },
     configureServer(server) {

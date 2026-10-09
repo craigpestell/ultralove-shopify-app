@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import db from "./db.server";
-import { selectionIds } from "./catalog-policy";
+import { CATALOG_BATCH_SIZE, selectionIds } from "./catalog-policy";
 import { importPlan, validateSelection } from "./catalog.server";
 import { assertLabShop } from "./lab-policy.server";
 import { ImportError, MAX_PREVIEW_AGE, importConfirmation, importDraft, importSettings, markupPercent, matchProduct, onlineStorePublication, payload, plannedFeed, priceRange, remoteCatalog, reviewLabels, shopContext } from "./import-engine";
@@ -28,13 +28,24 @@ export async function createPreview(shop: string, markup: string, api: GraphQL, 
     throw new ImportError("Publishing requires a valid Active import setting.");
   }
   const ids = configuration ? selectionIds(configuration.ids) : await savedSelection(shop);
-  if (!ids.length) throw new ImportError("Save between 1 and 50 selected parent products before reviewing pricing.");
+  if (!ids.length) throw new ImportError("Select at least one parent product before reviewing pricing.");
   const normalized = markupPercent(markup);
   const overrides = markupOverrides(configuration?.markups ?? {}, ids);
   const location = await shopContext(api, shop);
   const settings = importSettings(choices.active, choices.publish ? await onlineStorePublication(api) : null);
   const run = randomBytes(16).toString("hex");
-  const plan = plannedFeed(await importPlan(ids, location, run, normalized), ids, run, location);
+  const first = ids.slice(0, CATALOG_BATCH_SIZE);
+  const plan = plannedFeed(await importPlan(first, location, run, normalized), first, run, location);
+  let cursor = plan.cursor;
+  for (let offset = CATALOG_BATCH_SIZE; offset < ids.length; offset += CATALOG_BATCH_SIZE) {
+    const batch = ids.slice(offset, offset + CATALOG_BATCH_SIZE);
+    const next = plannedFeed(await importPlan(batch, location, run, normalized), batch, run, location);
+    if (next.generation !== plan.generation || next.cursor < cursor) {
+      throw new ImportError("Supplier feed changed while planning the selection. Create a fresh preview; nothing was saved.");
+    }
+    cursor = next.cursor;
+    plan.items.push(...next.items);
+  }
   for (const item of plan.items) {
     if (overrides[item.supplierId] !== undefined) {
       item.payload.variants = item.payload.variants.map((variant, index) => ({

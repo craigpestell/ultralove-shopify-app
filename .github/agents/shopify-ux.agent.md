@@ -60,8 +60,9 @@ Check:
 
 - A clear next action, consistent labels, and sensible information hierarchy.
 - Empty, no-results, loading, pending, success, and failure states.
-- Unsaved versus persisted selections, off-page selections, and the 50-parent
-  limit; preserve filter/navigation state and make consequences understandable.
+- Unsaved versus persisted selections and off-page selections; there is no
+  product-count cap. Preserve bounded catalog pagination and supplier request
+  batches, filter/navigation state, and understandable consequences.
 - Markup versus margin, global defaults versus per-product overrides, CAD
   prices, preview expiry, immutable snapshots, and safe default-off
   activation/publication choices.

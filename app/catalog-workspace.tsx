@@ -69,7 +69,6 @@ export default function CatalogWorkspace() {
   const pageIds = products?.products.map((product) => product.id) || [];
   const selectedOnPage = pageIds.filter((id) => ids.includes(id)).length;
   const allOnPageSelected = pageIds.length > 0 && selectedOnPage === pageIds.length;
-  const pageExceedsLimit = ids.length + pageIds.length - selectedOnPage > 50;
   const offPage = ids.filter((id) => !pageIds.includes(id));
   const select = (nextIds: number[]) => setDraft((current) => ({
     ...current, selected: nextIds, markups: selectedOverrides(current.markups, nextIds),
@@ -138,7 +137,6 @@ export default function CatalogWorkspace() {
         <div className="catalog-toolbar"><span>{products?.products.length ?? 0} products on this page · CAD</span>
           <Link to={viewHref("selection")}>Retail estimates at {markup}% default markup</Link>
           {categories?.has_more && <Link to={href({ category_after: String(categories.next_after_id) })}>More categories</Link>}</div>
-        {pageExceedsLimit && <p id="page-selection-limit">Selecting this page would exceed 50 products. Remove selections or select individually.</p>}
         {/* A focusable region lets keyboard users scroll wide catalog tables. */}
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
         <div className="catalog-table" tabIndex={0} role="region" aria-label="Supplier catalog">
@@ -146,13 +144,12 @@ export default function CatalogWorkspace() {
             <caption className="visually-hidden">Supplier products with wholesale prices and estimated retail prices in CAD</caption>
             <thead><tr><th scope="col"><span className="checkbox-label"><input type="checkbox" aria-label="Select all on this page" checked={allOnPageSelected}
               ref={(input) => { if (input) input.indeterminate = selectedOnPage > 0 && !allOnPageSelected; }}
-              disabled={busy || !pageIds.length || (!allOnPageSelected && pageExceedsLimit)}
-              aria-describedby={pageExceedsLimit ? "page-selection-limit" : undefined}
+              disabled={busy || !pageIds.length}
               onChange={(event) => select(pageSelection(ids, pageIds, event.currentTarget.checked))} /></span></th>
               <th scope="col">Product</th><th scope="col">Wholesale</th><th scope="col">Est. retail</th><th scope="col">Availability</th></tr></thead>
             <tbody>{products?.products.map((product) => <tr key={product.id} className={ids.includes(product.id) ? "is-selected" : undefined}>
               <td><input type="checkbox" aria-label={`Select ${supplierText(product.name)} (#${product.id})`} checked={ids.includes(product.id)}
-                disabled={busy || (!ids.includes(product.id) && ids.length >= 50)}
+                disabled={busy}
                 onChange={(event) => select(event.currentTarget.checked ? [...ids, product.id] : ids.filter((id) => id !== product.id))} /></td>
               <td><div className="catalog-product"><ProductImage image={product.images[0]} name={product.name} />
                 <div><strong>{supplierText(product.name)}</strong><small>{product.sku || "Missing SKU — review required"} · {product.type === "variable" ? "Multiple variants" : "Single variant"}</small></div></div></td>
@@ -202,7 +199,7 @@ export default function CatalogWorkspace() {
         </aside>
       </div>}
       {(view === "catalog" || view === "selection") && <div className="selection-bar">
-        <div role="status" aria-live="polite"><strong>{ids.length} / 50 selected</strong><small>{dirty ? "Unsaved to store" : "Saved to store"}{storageAvailable ? " · Draft kept in this tab" : ""}{view === "catalog" && offPage.length ? ` · ${offPage.length} outside this page` : ""}</small></div>
+        <div role="status" aria-live="polite"><strong>{ids.length} selected</strong><small>{dirty ? "Unsaved to store" : "Saved to store"}{storageAvailable ? " · Draft kept in this tab" : ""}{view === "catalog" && offPage.length ? ` · ${offPage.length} outside this page` : ""}</small></div>
         <div className="catalog-actions">
           <s-button disabled={busy || !dirty} onClick={save} loading={busy && navigation.formData?.get("intent") === "save-configuration"}>Save changes</s-button>
           <details className="selection-reset"><summary>Reset</summary><s-button disabled={busy || !dirty} onClick={() => setDraft((current) => ({ ...current, selected, markup: savedMarkup, markups: savedMarkups }))}>Restore saved selection and markup</s-button></details>

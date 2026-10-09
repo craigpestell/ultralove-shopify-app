@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createServer } from "vite";
 
-test("workspace restores bounded drafts, preserves unfinished edits and stores only browse context", async () => {
+test("workspace restores multi-page drafts, preserves unfinished edits and stores only browse context", async () => {
   const server = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true, include: [] },
     server: { middlewareMode: true, watch: null, hmr: false, ws: false }, appType: "custom" });
   try {
@@ -22,7 +22,7 @@ test("workspace restores bounded drafts, preserves unfinished edits and stores o
     assert.equal(validPricing({ ...restored, markup: "30.00" }), true);
     for (const markup of ["-1", "1001", "2.345", "1e2"]) assert.equal(validPricing({ ...restored, markup }), false);
     assert.equal(restoreDraft(draft, { ...saved, markup: "45" }), null, "external saved changes invalidate stale draft");
-    assert.equal(restoreDraft({ ...draft, selected: Array.from({ length: 51 }, (_, i) => i + 1) }, saved), null);
+    assert.equal(restoreDraft({ ...draft, selected: Array.from({ length: 125 }, (_, i) => i + 1), markups: {} }, saved).selected.length, 125);
     assert.equal(restoreDraft({ ...draft, markups: { 300: "30" } }, saved), null);
     assert.equal(restoreDraft(null, saved), null);
     assert.equal(statusLabel("NOT_ENROLLED"), "Sync off");

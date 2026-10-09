@@ -8,11 +8,13 @@ export function markupPercent(value: unknown): string {
 }
 
 export function markupOverrides(value: unknown, ids: number[]): MarkupOverrides {
-  if (typeof value !== "object" || value === null || Array.isArray(value) ||
-      Object.keys(value).length > 50) throw new PricingError("Invalid per-product markup overrides.");
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new PricingError("Invalid per-product markup overrides.");
+  }
   const overrides: MarkupOverrides = {};
+  const selected = new Set(ids);
   for (const [id, markup] of Object.entries(value)) {
-    if (!/^[1-9]\d*$/.test(id) || !ids.includes(Number(id))) {
+    if (!/^[1-9]\d*$/.test(id) || !selected.has(Number(id))) {
       throw new PricingError("Markup overrides must belong to selected parent products.");
     }
     try {

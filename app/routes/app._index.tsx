@@ -72,12 +72,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return redirect(destination(job.id));
     }
     let ids: number[];
-    try { ids = selectionIds(JSON.parse(field("ids"))); } catch { throw new ImportError("Select at most 50 distinct supplier product IDs."); }
+    try { ids = selectionIds(JSON.parse(field("ids", Infinity))); } catch { throw new ImportError("Select distinct positive supplier product IDs."); }
     const hasPricing = intent !== "save-selection";
     const markup = hasPricing ? markupPercent(field("markup")) : undefined;
     let markups: MarkupOverrides | undefined;
     if (hasPricing) {
-      try { markups = markupOverrides(JSON.parse(field("markups", 5000)), ids); }
+      try { markups = markupOverrides(JSON.parse(field("markups", Infinity)), ids); }
       catch (error) {
         if (error instanceof PricingError) throw error;
         throw new ImportError("Invalid per-product markup overrides.");

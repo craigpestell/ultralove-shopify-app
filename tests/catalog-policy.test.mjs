@@ -9,11 +9,11 @@ test("supplier labels decode HTML entities without rendering supplier markup", (
   assert.equal(supplierText("&lt;script&gt;"), "<script>");
 });
 
-test("selection accepts exactly 50 parents and never an implicit entire catalog", () => {
-  assert.equal(selectionIds(Array.from({length: 50}, (_, i) => i + 1)).length, 50);
+test("selection accepts more than one page while requiring explicit distinct parent IDs", () => {
+  assert.equal(selectionIds(Array.from({length: 1250}, (_, i) => i + 1)).length, 1250);
   assert.deepEqual(selectionIds([3, 1, 2]), [1, 2, 3]);
   assert.deepEqual(selectionIds([]), []);
-  for (const value of [null, [1, 1], ["1"], [0], [-1], [1.5], [Number.MAX_SAFE_INTEGER + 1], Array.from({length: 51}, (_, i) => i + 1)]) {
+  for (const value of [null, [1, 1], ["1"], [0], [-1], [1.5], [Number.MAX_SAFE_INTEGER + 1]]) {
     assert.throws(() => selectionIds(value));
   }
 });
@@ -37,6 +37,8 @@ test("page selection selects every visible parent and preserves selections on ot
   assert.deepEqual(pageSelection([1, 2, 100], [1, 2, 3], false), [100]);
   assert.deepEqual(pageSelection([100], [], true), [100]);
   assert.deepEqual(pageSelection([100], [], false), [100]);
-  assert.throws(() => pageSelection([100], page, true), /at most 50/);
+  assert.deepEqual(pageSelection([100], page, true), [...page, 100]);
+  const next = Array.from({ length: 50 }, (_, index) => index + 51);
+  assert.equal(pageSelection(page, next, true).length, 100);
   assert.deepEqual(pageSelection(page, page, false), []);
 });

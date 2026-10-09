@@ -54,7 +54,7 @@ test("plan requires every selected parent and complete variant pricing", () => {
   assert.throws(() => plannedFeed(feed, [100, 101], run, location));
   assert.throws(() => plannedFeed({ ...feed, items: [...feed.items, ...feed.items] }, [100], run, location));
   assert.throws(() => plannedFeed(feed, Array.from({ length: 51 }, (_, index) => index + 1), run, location));
-  const ids = Array.from({ length: 50 }, (_, index) => index + 1);
+  const ids = Array.from({ length: 125 }, (_, index) => index + 1);
   const fifty = { ...feed, items: ids.map((id) => {
     const copy = structuredClone(feed.items[0]);
     copy.supplierId = id;
@@ -63,7 +63,7 @@ test("plan requires every selected parent and complete variant pricing", () => {
     copy.payload.variants[0].metafields[0].value = String(id);
     return copy;
   }) };
-  assert.equal(plannedFeed(fifty, ids, run, location).items.length, 50);
+  assert.equal(plannedFeed(fifty, ids, run, location).items.length, 125);
 });
 test("CAD and exact merchant location must be confirmed", async () => {
   const context = { data: { shop: { myshopifyDomain: "lab.myshopify.com", currencyCode: "CAD" },

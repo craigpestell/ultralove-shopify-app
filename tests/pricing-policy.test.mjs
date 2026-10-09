@@ -14,6 +14,10 @@ test("global and per-parent markups share strict percent validation", () => {
   for (const invalid of [null, [], "{}", { 101: "25" }, { "0100": "25" }, { invalid: "25" }]) {
     assert.throws(() => markupOverrides(invalid, [100]));
   }
+  const ids = Array.from({ length: 1250 }, (_, index) => index + 1);
+  const overrides = Object.fromEntries(ids.map((id) => [id, "25"]));
+  assert.equal(Object.keys(markupOverrides(overrides, ids)).length, 1250);
+  assert.equal(markupOverrides(overrides, ids)[1250], "25.00");
 });
 
 test("CAD override prices use exact half-up rounding for zero, fractions and every variant", () => {

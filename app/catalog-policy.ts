@@ -1,8 +1,10 @@
+export const CATALOG_BATCH_SIZE = 50;
+
 export function selectionIds(value: unknown): number[] {
-  if (!Array.isArray(value) || value.length > 50 ||
+  if (!Array.isArray(value) ||
       value.some((id) => !Number.isSafeInteger(id) || id < 1) ||
       new Set(value).size !== value.length) {
-    throw new Error("Select at most 50 distinct positive supplier product IDs.");
+    throw new Error("Select distinct positive supplier product IDs.");
   }
   return value.slice().sort((a, b) => a - b);
 }

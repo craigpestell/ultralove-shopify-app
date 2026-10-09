@@ -66,7 +66,8 @@ test("unified catalog saves validated selections in place and keeps failures on 
     });
     const fields = (ids) => [["intent", "save-selection"], ["ids", JSON.stringify(ids)]];
 
-    for (const ids of [[3, 1, 2], []]) {
+    const largeIds = Array.from({ length: 1250 }, (_, index) => index + 1);
+    for (const ids of [[3, 1, 2], [], largeIds]) {
       const result = await action({ request: request(fields(ids)) });
       assert.equal(result.data.saved, true);
       assert.equal(result.data.error, null);
@@ -84,7 +85,7 @@ test("unified catalog saves validated selections in place and keeps failures on 
       [["intent", "wrong"], ["ids", "[1]"]],
       [...fields([1]), ["ids", "[2]"]],
       [["intent", "save-selection"], ["ids", "invalid JSON"]],
-      fields([1, 1]), fields(["1"]), fields(Array.from({ length: 51 }, (_, i) => i + 1)),
+      fields([1, 1]), fields(["1"]),
     ]) {
       const result = await action({ request: request(invalid) });
       assert.equal(result.init.status, 400);
@@ -118,6 +119,15 @@ test("unified catalog saves validated selections in place and keeps failures on 
     assert.equal(preview.headers.get("Location"), `/app?category_id=5&job=${"a".repeat(32)}&view=review`);
     assert.deepEqual(imports.previews.at(-1)[4], { ids: [1, 2], markups: { 2: "50.50" } });
     assert.deepEqual(imports.previews.at(-1)[3], { active: false, publish: false });
+    const largeOverrides = Object.fromEntries(largeIds.map((id) => [id, "25.5"]));
+    const largeConfiguration = [["intent", "preview"], ["ids", JSON.stringify(largeIds)],
+      ["markup", "10"], ["markups", JSON.stringify(largeOverrides)]];
+    assert.ok(largeConfiguration[1][1].length > 1000);
+    assert.ok(largeConfiguration[3][1].length > 5000);
+    const largePreview = await action({ request: request(largeConfiguration) });
+    assert.equal(largePreview.status, 302);
+    assert.equal(imports.previews.at(-1)[4].ids.length, 1250);
+    assert.equal(Object.keys(imports.previews.at(-1)[4].markups).length, 1250);
     await action({ request: request([["intent", "preview"], ["markup", "25"]]) });
     assert.equal(imports.previews.at(-1)[4], undefined, "legacy previews remain global-only");
     const previewCount = imports.previews.length;

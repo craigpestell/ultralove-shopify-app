@@ -128,10 +128,10 @@ export function payload(value: unknown, supplierId: number, runId: string, locat
 
 export function plannedFeed(value: unknown, ids: number[], runId: string, location: string) {
   const feed = object(value);
-  if (!ids.length || ids.length > 50 || new Set(ids).size !== ids.length ||
+  if (!ids.length || new Set(ids).size !== ids.length ||
       !ids.every((id) => Number.isSafeInteger(id) && id > 0) ||
       typeof feed.generation !== "string" || !/^[a-f0-9-]{36}$/i.test(feed.generation) ||
-      !Number.isSafeInteger(feed.cursor) || Number(feed.cursor) < 0) throw new ImportError("Invalid bounded import checkpoint.");
+      !Number.isSafeInteger(feed.cursor) || Number(feed.cursor) < 0) throw new ImportError("Invalid import checkpoint.");
   const items = list(feed.items).map((entry): PlannedItem => {
     const item = object(entry);
     if (!ids.includes(Number(item.supplierId)) || typeof item.supplierId !== "number") throw new ImportError("Unexpected supplier product in import plan.");

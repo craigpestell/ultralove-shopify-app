@@ -24,11 +24,16 @@ test("published jobs persist opt-in settings and recover an uncertain publicatio
         if (!id.endsWith("/app/catalog.server.ts")) return;
         return `
           import { retailPrice } from "/app/pricing-policy.ts";
-          export const fixture = { fail: false };
+          export const fixture = { fail: false, calls: [], secondBatch: null };
           export async function validateSelection() {}
           export async function importPlan(ids, location, run, markup) {
-            if (fixture.fail) throw new Error("Supplier feed unavailable");
-            return { generation: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", cursor: 1,
+            fixture.calls.push(ids);
+            if (ids.length > 50) throw new Error("Supplier batch exceeds its transport limit");
+            const second = fixture.calls.length === 2;
+            if (fixture.fail || (second && fixture.secondBatch === "fail")) throw new Error("Supplier feed unavailable");
+            return { generation: second && fixture.secondBatch === "generation"
+                ? "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" : "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+              cursor: second && fixture.secondBatch === "cursor" ? 0 : 1,
               items: ids.map(id => ({supplierId:id, name:"Sample product", sku:"SKU-"+id,
                 wholesale:id===200?["12.50","0.01",null]:["12.50"],
                 payload: {title:"Sample product", handle:"ultralove-catalog-"+id, status:"DRAFT",
@@ -204,6 +209,36 @@ test("published jobs persist opt-in settings and recover an uncertain publicatio
     const bulkScreen = await importScreen(shop, bulk.id);
     assert.equal(bulkScreen.job.items[0].retail, "21.88 CAD");
     assert.deepEqual(bulkScreen.job.markups, {});
+
+    const largeIds = Array.from({ length: 125 }, (_, index) => index + 1000);
+    const largeMarkups = Object.fromEntries(largeIds.map((id) => [id, "50"]));
+    const baseline = await savedConfiguration(shop);
+    const baselineJobs = await db.importJob.count();
+    for (const failure of ["fail", "generation", "cursor"]) {
+      fixture.calls = [];
+      fixture.secondBatch = failure;
+      await assert.rejects(createPreview(shop, "25", overrideApi, undefined, { ids: largeIds, markups: largeMarkups }),
+        failure === "fail" ? /Supplier feed unavailable/ : /feed changed/);
+      assert.deepEqual(fixture.calls.map((batch) => batch.length), [50, 50]);
+      assert.deepEqual(await savedConfiguration(shop), baseline, "no partial selection is saved after a later batch fails");
+      assert.equal(await db.importJob.count(), baselineJobs, "no partial job is persisted");
+    }
+    fixture.calls = [];
+    fixture.secondBatch = null;
+    const large = await createPreview(shop, "25", overrideApi, undefined, { ids: largeIds, markups: largeMarkups });
+    assert.deepEqual(fixture.calls.map((batch) => batch.length), [50, 50, 25]);
+    assert.deepEqual(fixture.calls.flat(), largeIds);
+    const largeScreen = await importScreen(shop, large.id);
+    assert.equal(largeScreen.job.items.length, 125);
+    assert.equal(Object.keys(largeScreen.job.markups).length, 125);
+    assert.ok(largeScreen.job.items.every((item) => item.markup === "50.00" && item.retail === "18.75 CAD"));
+    const inputsBefore = inputs.length;
+    await queueJob(shop, large.id, false);
+    await runJob(large.id, shop, overrideApi, () => false);
+    assert.equal((await importScreen(shop, large.id)).job.status, "COMPLETE");
+    assert.equal(inputs.length - inputsBefore, 125, "worker processes every parent in a larger-than-page import");
+    assert.ok(inputs.slice(inputsBefore).every((input) => input.variants[0].price === "18.75"));
+    await assert.rejects(queueJob(shop, large.id, true), /current state/, "completed jobs cannot be blindly retried");
   } finally {
     await db.$disconnect();
     await server.close();

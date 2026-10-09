@@ -15,14 +15,14 @@ to login, authenticated routes and webhook handlers. The template's product
 creation demo has been removed.
 
 The browser provides name/SKU search, category navigation, bounded
-50-parent pages and per-store saved selections capped at 50 parents. Saving
+50-parent pages and per-store saved selections without a product-count cap. Saving
 does not import, publish, sync inventory or approve forwarding. It validates
 published selections against the real feed before committing app-owned SQLite
 state; no WordPress product mappings or settings are changed.
 The table's **Select all on this page** checkbox selects or deselects only the
 visible page, preserving choices on other pages. It shows a partial state when
-some rows are selected. If the full page would exceed the 50-parent total, the
-control is disabled with an explanation; clear choices or select rows individually.
+some rows are selected. Selections accumulate across pages without disabling
+products or page selection at a 50-parent total.
 Bulk selection changes the working selection only. The merchant workspace separates
 **Catalog**, **Selection & pricing**, **Review import**, **Imports**, and **Inventory**
 by task. Catalog rows pair wholesale prices with retail estimates; the selection
@@ -65,7 +65,7 @@ are authorized for the existing lab installation.
 
 ## Pricing and product-import jobs
 
-In **Catalog**, select 1–50 parents, then open **Selection & pricing** and set the
+In **Catalog**, select one or more parents, then open **Selection & pricing** and set the
 **Default retail markup** between 0 and 1000 percent, with at most two decimal
 places. The default applies to every
 selected parent unless its **Markup override** is set; a parent's override
@@ -87,6 +87,15 @@ Override prices use exact decimal half-up rounding. No FX conversion, shipping,
 tax or fee adjustment is applied. Default and per-parent markup values are
 persisted with the snapshot, and the background worker consumes its frozen
 variant prices rather than recomputing them from later edits.
+
+There is no app-level product-count limit on saved selections, overrides, or
+import jobs. Supplier validation and planning still use sequential requests of
+at most 50 parents to respect the existing feed/SSH transport bounds. All plan
+batches must have the same feed generation and nondecreasing cursors; a failed
+or inconsistent batch leaves the saved configuration and job history unchanged.
+Catalog pages remain bounded at 50 products. Large selections still depend on
+request-size, browser storage, feed rate limits, and preview freshness; explicit
+errors must not be treated as a successful partial import.
 
 The **Set new products to Active** and **Publish new products to Online Store**
 switches both default off. Publishing requires Active status; turning Active

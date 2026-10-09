@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { CATALOG_BATCH_SIZE, selectionIds } from "./catalog-policy.ts";
 
 export class CatalogError extends Error {
   readonly retryAfter: number | null;
@@ -121,14 +122,16 @@ export async function categoriesPage(after: number, transport: Transport = sshTr
 }
 
 export async function validateSelection(ids: number[], transport: Transport = sshTransport): Promise<void> {
-  if (!ids.length) return;
-  const data = await transport({ operation: "selection", ids });
-  const selected = object(data) ? data.ids : null;
-  if (!Array.isArray(selected) || selected.length !== ids.length ||
-      !ids.every((id) => selected.includes(id))) {
-    throw new CatalogError("Some selected products are no longer published. Refresh the catalog and revise the selection.");
+  const selectedIds = selectionIds(ids);
+  for (let offset = 0; offset < selectedIds.length; offset += CATALOG_BATCH_SIZE) {
+    const batch = selectedIds.slice(offset, offset + CATALOG_BATCH_SIZE);
+    const data = await transport({ operation: "selection", ids: batch });
+    const selected = object(data) ? data.ids : null;
+    if (!Array.isArray(selected) || selected.length !== batch.length ||
+        !batch.every((id) => selected.includes(id))) {
+      throw new CatalogError("Some selected products are no longer published. Refresh the catalog and revise the selection.");
+    }
   }
-
 }
 
 export async function importPlan(ids: number[], location: string, run: string, markup: string, transport: Transport = sshTransport): Promise<unknown> {
