@@ -36,6 +36,8 @@ model Session {
 model CatalogSelection {
   shop       String   @id
   productIds String   @default("[]")
+  markup     String   @default("0.00")
+  markups    String   @default("{}")
   updatedAt  DateTime @updatedAt
 }
 
@@ -46,6 +48,7 @@ model ImportJob {
   status     String       @default("PREVIEW")
   selection  String
   markup     String
+  markups    String       @default("{}")
   active     Boolean      @default(false)
   publicationId String?
   locationId String

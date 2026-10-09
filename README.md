@@ -23,9 +23,14 @@ The table's **Select all on this page** checkbox selects or deselects only the
 visible page, preserving choices on other pages. It shows a partial state when
 some rows are selected. If the full page would exceed the 50-parent total, the
 control is disabled with an explanation; clear choices or select rows individually.
-Bulk selection changes the working selection only; **Save selection and review
-pricing** persists it and opens the pricing/import page. Validation failures stay
-on the catalog page without changing the saved selection or navigating.
+Bulk selection changes the working selection only. The redesigned `/app` keeps
+catalog browsing, saved selections, retail markup, visibility, preview,
+confirmation, queue/retry and results together on one page. **Save selection and
+markup** persists the selection and pricing without creating a preview or job.
+Validation failures stay on that page without changing the saved configuration.
+Existing `/app/imports` bookmarks redirect to `/app` with their job and embedded
+authentication query context retained; legacy preview/queue/retry forms remain
+supported. This redesign is local source work, not a deployed release.
 
 The feed-selection catalog rows show the first supplier product image as a
 48-pixel thumbnail. Hover, focus with the keyboard, or tap/click the thumbnail
@@ -50,16 +55,27 @@ are authorized for the existing lab installation.
 
 ## Pricing and product-import jobs
 
-From the catalog, select 1-50 parents and choose **Save selection and review
-pricing** to save and open **Pricing and product imports**. This does not create
-a preview or queue an import. The separate **Review pricing and product imports**
-link revisits that page using previously saved selections.
-Set an initial markup between 0 and 1000 percent, with at most two
-decimal places, then choose **Preview import**. The preview uses the
+On `/app`, select 1–50 parents and set the **Default retail markup** between
+0 and 1000 percent, with at most two decimal places. The default applies to every
+selected parent unless its **Markup override** is set; a parent's override
+applies to all its variants. Changing the default preserves overrides.
+Leave an override blank to use the default, or choose **Apply default to all
+selected products** to explicitly remove every override (including off-page
+products). **Reset to saved selection and markup** discards working pricing and
+selection edits. Off-page selections remain editable/removable when filtering
+or paginating, and same-page navigation preserves unsaved settings.
+
+Choose **Save selection and markup** to save without importing, or **Preview
+import** to atomically save and create an immutable snapshot. A failed preview
+does not replace the saved configuration. Default and overrides receive the
+same server-side validation. The preview uses the
 existing supplier payload builder, including published variants, barcodes,
 approved public media and explicit stock/data-review warnings. Retail prices
 are supplier prices multiplied by `(1 + markup / 100)`, rounded to two decimals.
-No FX conversion, shipping, tax or fee adjustment is applied.
+Override prices use exact decimal half-up rounding. No FX conversion, shipping,
+tax or fee adjustment is applied. Default and per-parent markup values are
+persisted with the snapshot, and the background worker consumes its frozen
+variant prices rather than recomputing them from later edits.
 
 The **Set new products to Active** and **Publish new products to Online Store**
 switches both default off. Publishing requires Active status; turning Active
@@ -78,9 +94,13 @@ that job, never to reused listings from prior imports.
 
 Confirm the displayed snapshot and choose **Queue import** within ten
 minutes. The server verifies that saved selections still match the preview.
+The interface requires a fresh preview when working selection or pricing
+differs from its snapshot; editing visibility never changes a saved snapshot.
 Only one job per store can be queued/running. A separate non-root systemd worker
 processes it; public HTTP handlers never execute a root importer.
 Status refreshes automatically and shows per-product results and Shopify links.
+Failed jobs can be retried/reconciled on the same page using their original
+snapshot, not the current working settings.
 Existing owned and recognized legacy listings are reused without any mutation,
 including their retailer-edited prices, content, inventory and publication state.
 
@@ -144,6 +164,38 @@ published during these checks.
 
 ## Local validation
 
+### UX ownership
+
+Select **Shopify UX** in VS Code's Chat agent picker with this repository open.
+The project-specific agent is defined in
+[shopify-ux.agent.md](.github/agents/shopify-ux.agent.md) and can also be delegated
+merchant UX tasks by other agents. It owns catalog selection, pricing previews,
+import feedback, accessibility, and responsive embedded layouts; it implements
+and verifies focused improvements rather than only suggesting a redesign.
+
+The project includes two complementary skills:
+
+- [Web Design Guidelines](.agents/skills/web-design-guidelines/SKILL.md), from
+  Vercel, for interaction and accessibility reviews.
+- [Frontend Design](.agents/skills/frontend-design/SKILL.md), from Anthropic,
+  for intentional hierarchy, layout, and copy, subordinate to native Shopify
+  Polaris conventions.
+
+The agent also uses the existing Shopify AI Toolkit required by `AGENTS.md`.
+Toolkit helpers must run with `OPT_OUT_INSTRUMENTATION=true`; app code and
+merchant data must not be sent as telemetry.
+Skill sources are recorded in `skills-lock.json`. To restore the project skills,
+run `npx skills experimental_install`.
+
+Example task: "Improve the catalog-to-import journey. Identify the highest-impact
+merchant friction, implement a focused set of improvements, and verify the
+selection, preview, and import-feedback states without mutating a live store."
+Selecting the agent assigns a role for that session; it is not an autonomous
+background service. Deployment and live-store mutations require separate
+authorization.
+
+### Commands
+
 Use Node 24 and npm:
 
 ```sh
@@ -156,6 +208,18 @@ npm run check
 Checks include offline lab-policy tests, TypeScript, ESLint and the production
 build. These do not establish live Shopify authentication or feed connectivity.
 For a configured local session and selection database, run `npm run setup`.
+
+The additive `20261009203000_product_markups` migration must precede the updated
+app/worker. Saved defaults initialize to `0.00`; empty override maps preserve
+historical global-only jobs and their existing payloads. No live migration is
+performed by local validation.
+
+For a safe browser walkthrough, run `node tests/fixtures/unified-import.mjs` and
+open the localhost URL it prints. It uses the real unified route/components with
+synthetic authentication, feed, persistence, queue and results. It cannot call
+Shopify or write the live store/database. Queueing deliberately produces a mock
+failure; retry demonstrates reconciliation/completion. This fixture tests UI
+behavior, not real embedded authentication, feed or worker connectivity.
 
 Prisma and `@prisma/client` stay on the supported 6.19 line (minimum 6.19.3).
 The official Shopify Prisma session adapter currently requires Prisma 6; a

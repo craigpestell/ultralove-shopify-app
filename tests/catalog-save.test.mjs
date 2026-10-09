@@ -5,10 +5,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createStaticHandler, createStaticRouter, StaticRouterProvider } from "react-router";
 import { createServer } from "vite";
 
-test("catalog saves validated selections before redirecting to pricing and keeps failures on the catalog", async () => {
+test("unified catalog saves validated selections in place and keeps failures on the same page", async () => {
   const shop = "ultralove-integration-lab.myshopify.com";
   const server = await createServer({
-    configFile: false, server: { middlewareMode: true, watch: null, hmr: false, ws: false }, appType: "custom",
+    configFile: false, optimizeDeps: { noDiscovery: true, include: [] },
+    server: { middlewareMode: true, watch: null, hmr: false, ws: false }, appType: "custom",
     plugins: [{
       name: "test-catalog-save",
       enforce: "pre",
@@ -26,6 +27,16 @@ test("catalog saves validated selections before redirecting to pricing and keeps
             persistence.writes.push(input);
             return input.create;
           } } };`;
+        if (id.endsWith("/app/imports.server.ts")) return `
+          export const imports = { previews: [], queued: [] };
+          export async function createPreview(...args) {
+            imports.previews.push(args);
+            return {id:"${"a".repeat(32)}"};
+          }
+          export async function queueJob(...args) { imports.queued.push(args); }
+          export async function importScreen() { return {
+            selected:[1],markup:"25.00",markups:{},job:null,history:[]
+          }; }`;
         if (id.endsWith("/app/catalog.server.ts")) return `
           export class CatalogError extends Error {}
           export const validation = { calls: [], reject: false };
@@ -39,10 +50,11 @@ test("catalog saves validated selections before redirecting to pricing and keeps
     }],
   });
   try {
-    const { action, default: Index } = await server.ssrLoadModule("/app/routes/app._index.tsx");
+    const { action, default: Index, loader } = await server.ssrLoadModule("/app/routes/app._index.tsx");
     const { persistence } = await server.ssrLoadModule("/app/db.server.ts");
     const { validation } = await server.ssrLoadModule("/app/catalog.server.ts");
     const { auth } = await server.ssrLoadModule("/app/shopify.server.ts");
+    const { imports } = await server.ssrLoadModule("/app/imports.server.ts");
     const request = (fields) => new Request("https://app.example/app?category_id=5", {
       method: "POST", body: new URLSearchParams(fields),
     });
@@ -50,13 +62,13 @@ test("catalog saves validated selections before redirecting to pricing and keeps
 
     for (const ids of [[3, 1, 2], []]) {
       const result = await action({ request: request(fields(ids)) });
-      assert.equal(result.status, 302);
-      assert.equal(result.headers.get("Location"), "/app/imports");
+      assert.equal(result.data.saved, true);
+      assert.equal(result.data.error, null);
       const expected = JSON.stringify([...ids].sort((a, b) => a - b));
       assert.deepEqual(persistence.writes.at(-1), {
         where: { shop },
-        create: { shop, productIds: expected },
-        update: { productIds: expected },
+        create: { shop, productIds: expected, markups: "{}" },
+        update: { productIds: expected, markups: "{}" },
       });
       assert.equal(JSON.stringify(validation.calls.at(-1)), expected);
     }
@@ -87,11 +99,54 @@ test("catalog saves validated selections before redirecting to pricing and keeps
     auth.reject = true;
     await assert.rejects(action({ request: request(fields([1])) }), (error) => error.status === 403);
     assert.equal(persistence.writes.length, writes);
+    auth.reject = false;
+
+    const configuration = [["intent", "save-configuration"], ["ids", "[1,2]"], ["markup", "25"],
+      ["markups", '{"2":"50.5"}']];
+    const saved = await action({ request: request(configuration) });
+    assert.equal(saved.data.saved, true);
+    assert.deepEqual(persistence.writes.at(-1).update, {
+      productIds: "[1,2]", markup: "25.00", markups: '{"2":"50.50"}',
+    });
+    const preview = await action({ request: request(configuration.map(([key, value]) => [key, key === "intent" ? "preview" : value])) });
+    assert.equal(preview.headers.get("Location"), `/app?category_id=5&job=${"a".repeat(32)}`);
+    assert.deepEqual(imports.previews.at(-1)[4], { ids: [1, 2], markups: { 2: "50.50" } });
+    assert.deepEqual(imports.previews.at(-1)[3], { active: false, publish: false });
+    await action({ request: request([["intent", "preview"], ["markup", "25"]]) });
+    assert.equal(imports.previews.at(-1)[4], undefined, "legacy previews remain global-only");
+    const previewCount = imports.previews.length;
+    const writeCount = persistence.writes.length;
+    for (const changed of [
+      ["markups", '{"3":"25"}'], ["markups", '{"1":"-1"}'], ["markups", '{"1":"1000.01"}'],
+      ["markups", '{"1":"25.001"}'], ["markups", "[]"], ["markups", "invalid"],
+      ["markup", "25.001"],
+    ]) {
+      const invalid = configuration.map(([key, value]) => [key, key === changed[0] ? changed[1] : value]);
+      const rejected = await action({ request: request(invalid) });
+      assert.equal(rejected.init.status, 400);
+      assert.equal(persistence.writes.length, writeCount);
+      assert.equal(imports.previews.length, previewCount);
+    }
+    for (const intent of ["queue", "retry"]) {
+      const response = await action({ request: request([["intent", intent], ["job", "a".repeat(32)], ["confirm", "draft-only"]]) });
+      assert.equal(response.headers.get("Location"), `/app?category_id=5&job=${"a".repeat(32)}`);
+      assert.deepEqual(imports.queued.at(-1), [shop, "a".repeat(32), intent === "retry", "draft-only"]);
+    }
+    for (const query of ["?job=bad", `?job=${"a".repeat(32)}&job=${"b".repeat(32)}`]) {
+      await assert.rejects(loader({ request: new Request(`https://app.example/app${query}`) }), (error) => error.status === 400);
+    }
+    const { loader: legacyLoader, action: legacyAction } = await server.ssrLoadModule("/app/routes/app.imports.tsx");
+    const legacyResponse = await legacyLoader({ request: new Request(`https://app.example/app/imports?job=${"a".repeat(32)}&host=fixture&shop=${shop}`) });
+    assert.equal(legacyResponse.headers.get("Location"), `/app?job=${"a".repeat(32)}&host=fixture&shop=${shop}`);
+    assert.equal((await legacyAction({ request: request([["intent", "preview"], ["markup", "25"]]) })).status, 302);
+    auth.reject = true;
+    await assert.rejects(legacyLoader({ request: new Request("https://app.example/app/imports") }), (error) => error.status === 403);
+    auth.reject = false;
 
     const handler = createStaticHandler([{
       id: "catalog", path: "/app", Component: Index,
       loader: async () => ({
-        shop, selected: [1], filters: { categoryAfter: 0 },
+        shop, selected: [1], markup: "25.00", markups: {}, job: null, history: [], filters: { categoryAfter: 0 },
         products: { products: [], next_after_id: 0, has_more: false },
         categories: { categories: [], next_after_id: 0, has_more: false }, error: null,
       }),
@@ -99,8 +154,11 @@ test("catalog saves validated selections before redirecting to pricing and keeps
     const context = await handler.query(new Request("https://app.example/app"));
     const router = createStaticRouter(handler.dataRoutes, context);
     const html = renderToStaticMarkup(createElement(StaticRouterProvider, { router, context }));
-    assert.match(html, /<button type="submit">Save selection and review pricing<\/button>/);
-    assert.doesNotMatch(html, /Save selection \(no import\)/);
+    assert.match(html, /Save selection and markup/);
+    assert.match(html, /Default retail markup/);
+    assert.match(html, /Preview and import results/);
+    assert.match(html, /Selected products on other pages/);
+    assert.doesNotMatch(html, /href="\/app\/imports/);
     assert.match(html, /No import runs until you confirm and queue it/);
   } finally {
     await server.close();

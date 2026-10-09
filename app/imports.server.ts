@@ -6,30 +6,47 @@ import { importPlan, validateSelection } from "./catalog.server";
 import { assertLabShop } from "./lab-policy.server";
 import { ImportError, MAX_PREVIEW_AGE, importConfirmation, importDraft, importSettings, markupPercent, matchProduct, onlineStorePublication, payload, plannedFeed, priceRange, remoteCatalog, reviewLabels, shopContext } from "./import-engine";
 import type { GraphQL } from "./import-engine";
+import { markupOverrides, retailPrice } from "./pricing-policy";
+import type { MarkupOverrides } from "./pricing-policy";
 
-export async function savedSelection(shop: string) {
+export async function savedConfiguration(shop: string) {
   assertLabShop(shop);
   const saved = await db.catalogSelection.findUnique({ where: { shop } });
-  return selectionIds(saved ? JSON.parse(saved.productIds) : []);
+  const selected = selectionIds(saved ? JSON.parse(saved.productIds) : []);
+  return { selected, markup: markupPercent(saved?.markup ?? "0"),
+    markups: markupOverrides(JSON.parse(saved?.markups ?? "{}"), selected) };
 }
 
-export async function createPreview(shop: string, markup: string, api: GraphQL, choices = { active: false, publish: false }) {
+export async function savedSelection(shop: string) {
+  return (await savedConfiguration(shop)).selected;
+}
+
+export async function createPreview(shop: string, markup: string, api: GraphQL, choices = { active: false, publish: false },
+  configuration?: { ids: number[]; markups: MarkupOverrides }) {
   assertLabShop(shop);
   if (typeof choices.active !== "boolean" || typeof choices.publish !== "boolean" || (choices.publish && !choices.active)) {
     throw new ImportError("Publishing requires a valid Active import setting.");
   }
-  const ids = await savedSelection(shop);
+  const ids = configuration ? selectionIds(configuration.ids) : await savedSelection(shop);
   if (!ids.length) throw new ImportError("Save between 1 and 50 selected parent products before reviewing pricing.");
   const normalized = markupPercent(markup);
+  const overrides = markupOverrides(configuration?.markups ?? {}, ids);
   const location = await shopContext(api, shop);
   const settings = importSettings(choices.active, choices.publish ? await onlineStorePublication(api) : null);
   const run = randomBytes(16).toString("hex");
   const plan = plannedFeed(await importPlan(ids, location, run, normalized), ids, run, location);
+  for (const item of plan.items) {
+    if (overrides[item.supplierId] !== undefined) {
+      item.payload.variants = item.payload.variants.map((variant, index) => ({
+        ...variant, price: retailPrice(item.wholesale[index], overrides[item.supplierId]),
+      }));
+    }
+  }
   const products = await remoteCatalog(api);
   for (const item of plan.items) matchProduct(products, item.supplierId);
-  return db.importJob.create({
+  const input = {
     data: {
-      id: run, shop, selection: JSON.stringify(ids), markup: normalized, locationId: location,
+      id: run, shop, selection: JSON.stringify(ids), markup: normalized, markups: JSON.stringify(overrides), locationId: location,
       generation: plan.generation, cursor: plan.cursor,
       ...settings,
       items: { create: plan.items.map((item) => ({
@@ -38,6 +55,15 @@ export async function createPreview(shop: string, markup: string, api: GraphQL, 
         productId: matchProduct(products, item.supplierId)?.id || null,
       })) },
     },
+  };
+  if (!configuration) return db.importJob.create(input);
+  return db.$transaction(async (transaction) => {
+    await transaction.catalogSelection.upsert({
+      where: { shop },
+      create: { shop, productIds: JSON.stringify(ids), markup: normalized, markups: JSON.stringify(overrides) },
+      update: { productIds: JSON.stringify(ids), markup: normalized, markups: JSON.stringify(overrides) },
+    });
+    return transaction.importJob.create(input);
   });
 }
 
@@ -64,15 +90,17 @@ export async function queueJob(shop: string, id: string, retry: boolean, confirm
 
 export async function importScreen(shop: string, id: string | null) {
   assertLabShop(shop);
-  const [selected, history, current] = await Promise.all([
-    savedSelection(shop),
+  const [configuration, history, current] = await Promise.all([
+    savedConfiguration(shop),
     db.importJob.findMany({ where: { shop }, orderBy: { createdAt: "desc" }, take: 10,
       select: { id: true, status: true, markup: true, createdAt: true, items: { select: { status: true } } } }),
     id ? db.importJob.findFirst({ where: { id, shop }, include: { items: { orderBy: { supplierId: "asc" } } } }) : null,
   ]);
   if (id && !current) throw new Response("Import job not found.", { status: 404 });
+  const overrides = current ? markupOverrides(JSON.parse(current.markups), selectionIds(JSON.parse(current.selection))) : {};
   const job = current && {
     id: current.id, status: current.status, markup: current.markup, createdAt: current.createdAt.toISOString(),
+    markups: overrides,
     ...importSettings(current.active, current.publicationId),
     confirmation: importConfirmation(importSettings(current.active, current.publicationId)),
     error: current.error, generation: current.generation, cursor: current.cursor,
@@ -80,13 +108,14 @@ export async function importScreen(shop: string, id: string | null) {
       const input = payload(JSON.parse(item.payload), item.supplierId, current.id, current.locationId);
       return {
         supplierId: item.supplierId, name: item.name, sku: item.sku, status: item.status,
+        markup: overrides[item.supplierId] ?? current.markup,
         productId: item.productId, error: item.error, attempts: item.attempts,
         wholesale: priceRange(JSON.parse(item.wholesale)), retail: priceRange(input.variants.map((variant) => variant.price)),
         variantCount: input.variants.length, warnings: reviewLabels(input),
       };
     }),
   };
-  return { selected, job, history: history.map((entry) => ({
+  return { ...configuration, job, history: history.map((entry) => ({
     id: entry.id, status: entry.status, markup: entry.markup, createdAt: entry.createdAt.toISOString(),
     completed: entry.items.filter((item) => item.status === "CREATED" || item.status === "REUSED").length,
     total: entry.items.length,

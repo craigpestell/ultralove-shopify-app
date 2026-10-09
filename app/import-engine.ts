@@ -1,3 +1,5 @@
+import { markupPercent as normalizeMarkup, PricingError } from "./pricing-policy.ts";
+
 export class ImportError extends Error {}
 export type GraphQL = (query: string, variables: Record<string, unknown>) => Promise<unknown>;
 type Metadata = { namespace: string; key: string; value: string };
@@ -68,9 +70,12 @@ function metadata(value: unknown): Metadata[] {
 }
 
 export function markupPercent(value: unknown): string {
-  if (typeof value !== "string" || !/^(?:0|[1-9]\d{0,3})(?:\.\d{1,2})?$/.test(value.trim()) ||
-      Number(value) > 1000) throw new ImportError("Initial markup must be 0-1000 percent, with at most two decimal places.");
-  return Number(value).toFixed(2);
+  try {
+    return normalizeMarkup(value);
+  } catch (error) {
+    if (!(error instanceof PricingError)) throw error;
+    throw new ImportError(error.message);
+  }
 }
 function cents(value: string): bigint {
   if (value.length > 128 || !/^\d+(?:\.\d{1,2})?$/.test(value)) throw new ImportError("Invalid CAD price.");

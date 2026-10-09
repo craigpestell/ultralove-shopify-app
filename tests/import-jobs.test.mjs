@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createServer } from "vite";
 
 test("persistent queue enforces one active shop job, immutable selections and preview expiry", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "ultralove-job-test-"));
+  const directory = join(process.cwd(), `.test-import-jobs-${randomUUID()}`);
+  await mkdir(directory);
   const previous = process.env.DATABASE_URL;
   process.env.DATABASE_URL = `file:${join(directory, "test.sqlite")}`;
-  const server = await createServer({ configFile: false, server: { middlewareMode: true, watch: null, hmr: false, ws: false }, appType: "custom" });
+  const server = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true, include: [] },
+    server: { middlewareMode: true, watch: null, hmr: false, ws: false }, appType: "custom" });
   const { default: db } = await server.ssrLoadModule("/app/db.server.ts");
   try {
     for (const migration of ["20261009120000_catalog_selection", "20261009130000_import_jobs"]) {
@@ -21,9 +23,13 @@ test("persistent queue enforces one active shop job, immutable selections and pr
       VALUES (?,?,?,?,?,?,?,?)`, legacy, "ultralove-integration-lab.myshopify.com", "[100]", "0.00", "gid://shopify/Location/1", "a".repeat(36), 1, new Date());
     const visibility = await readFile(new URL("../prisma/migrations/20261009190000_import_visibility/migration.sql", import.meta.url), "utf8");
     for (const statement of visibility.split(";").filter((part) => part.trim())) await db.$executeRawUnsafe(statement);
+    const pricing = await readFile(new URL("../prisma/migrations/20261009203000_product_markups/migration.sql", import.meta.url), "utf8");
+    for (const statement of pricing.split(";").filter((part) => part.trim())) await db.$executeRawUnsafe(statement);
     const migrated = await db.importJob.findUnique({ where: { id: legacy } });
     assert.equal(migrated.active, false, "old jobs remain draft-only");
     assert.equal(migrated.publicationId, null);
+    assert.equal(migrated.markups, "{}", "historical jobs retain their global-only markup");
+    assert.equal(migrated.markup, "0.00");
     const shop = "ultralove-integration-lab.myshopify.com";
     await db.catalogSelection.create({ data: { shop, productIds: "[100]" } });
     const { queueJob, importScreen } = await server.ssrLoadModule("/app/imports.server.ts");

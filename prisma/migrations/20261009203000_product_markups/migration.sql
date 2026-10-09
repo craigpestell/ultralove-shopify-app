@@ -1,0 +1,3 @@
+ALTER TABLE "CatalogSelection" ADD COLUMN "markup" TEXT NOT NULL DEFAULT '0.00';
+ALTER TABLE "CatalogSelection" ADD COLUMN "markups" TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE "ImportJob" ADD COLUMN "markups" TEXT NOT NULL DEFAULT '{}';

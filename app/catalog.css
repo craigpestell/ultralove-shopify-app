@@ -9,6 +9,20 @@
 .catalog-browser input[type="checkbox"] { width: 18px; height: 18px; }
 .catalog-browser :focus-visible { outline: 2px solid #005bd3; outline-offset: 2px; }
 .catalog-table { overflow-x: auto; }
+.catalog-pricing-controls, .catalog-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin: 16px 0; }
+.catalog-pricing-controls input { max-width: 160px; }
+.catalog-table input[type="number"] { width: 140px; box-sizing: border-box; }
+.catalog-selected-products { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 16px; }
+.catalog-off-page { margin: 16px 0; border: 1px solid #e1e3e5; border-radius: 6px; padding: 12px; }
+.catalog-confirmation { margin: 16px 0; }
+.catalog-confirmation s-button { margin-top: 12px; }
+.catalog-browser { min-width: 0; overflow-wrap: anywhere; }
+.catalog-table td { font-variant-numeric: tabular-nums; }
+.catalog-filters > label { min-width: 0; }
+@media (max-width: 600px) {
+  .catalog-filters > label { width: 100%; }
+  .catalog-filters input:not([type="hidden"]), .catalog-filters select { width: 100%; box-sizing: border-box; }
+}
 .catalog-table table { width: 100%; border-collapse: collapse; }
 .catalog-table th, .catalog-table td { padding: 12px; border-bottom: 1px solid #e1e3e5; text-align: left; }
 .catalog-table small { display: block; color: #616a75; }
