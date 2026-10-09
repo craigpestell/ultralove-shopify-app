@@ -44,8 +44,8 @@ image URLs are left unchanged.
 Image previews do not select products or submit forms.
 
 The deployed pricing/import increment adds immutable CAD previews and background
-draft-import jobs. Opt-in inventory synchronization is implemented and tested
-locally; it has not yet been deployed or enabled in the lab.
+draft-import jobs. Opt-in inventory synchronization is deployed to the integration
+lab as release `107030b`; enrollment remains off until explicitly enabled.
 The existing
 feed and root-only PHP workers remain in `craigpestell/ultralove`; this web
 process must never run those workers as root or read their credential files.
@@ -489,7 +489,9 @@ Provisioning sources are in `ops/provision-app-catalog.sh`,
 
 This connection deliberately does not request the optional strict database
 read mode used by the earlier standalone import verifier. The existing guard
-is unchanged. No WordPress runtime code deployment is needed for this adapter.
+is unchanged. Inventory synchronization requires the development supplier
+feed-client update deployed as `618a71a`; the original browsing adapter did not
+require a WordPress runtime code deployment.
 
 The app source is published in the private GitHub repository. Its `main` branch
 contains the approved catalog/hosting, pricing/import and page-selection work.
@@ -502,17 +504,50 @@ and approval.
 
 ## Current host and rollback
 
-The deployed release is `f986174` on the isolated integration-lab
+The deployed release is `107030b` on the isolated integration-lab
 droplet. Node 24.21.0 runs as `ultralove-shopify` on `127.0.0.1:3097`,
 proxied by its separate HTTPS Nginx vhost. Source is under
 `/srv/ultralove-shopify/releases`; `current` selects the release.
 Sessions are in `/var/lib/ultralove-shopify/sessions.sqlite` (mode 0600).
 The app environment is root-readable only at `/etc/ultralove-shopify/app.env`.
-Request logging omits query parameters. Existing supplier WordPress is untouched.
+Request logging omits query parameters. The development supplier feed client
+is deployed as `618a71a`; production WordPress is untouched.
 The separate `ultralove-shopify-imports` service runs as the same non-root user,
-with a singleton worker lock. Persistent jobs and creation claims share the
+with a singleton worker lock. Persistent jobs, creation claims and inventory
+enrollment/checkpoints share the
 session database; pre-migration backups are root-only under
 `/srv/ultralove-shopify/backups`.
+
+### Inventory deployment verification, 2026-10-09
+
+- App code commit/release `107030bcd7f7824095d9140dd305fe186c94ba7d`;
+  supplier commit `618a71a`, published on the dedicated
+  `feat/shopify-inventory-sync` branch for the normal development deploy.
+  App code was deployed from an exact git archive without pushing app `main`.
+- The supplier deployment found no drift and changed only its feed-client PHP
+  file. Server syntax checks passed, PHP-FPM restarted, and all four development
+  smoke-test URLs returned 200. The restricted proxy matched its previous source
+  before replacement; its root-only rollback copy is
+  `/root/ultralove-catalog-proxy-before-107030b.php`. Credentials, pinned host key,
+  Cloudflare Access and firewall policy were unchanged.
+- The additive inventory migration applied successfully. All 50 app tests,
+  type-check, lint and app/worker builds passed during provisioning.
+  The pre-migration database backup is `20261009T204650280657Z.sqlite`.
+  App, import/inventory worker and Nginx are active; HTTPS readiness passed.
+- Real authenticated inventory reads for source `17539` returned one variant.
+  A subsequent checkpoint read retained the same generation and cursor `9027`
+  with `resynced:false`. This verified the new supplier-client/proxy/SSH path.
+- The authenticated inventory page loaded inside Shopify Admin without console
+  errors and displayed imported-product rows with confirmation checkboxes and
+  **Enable inventory sync** controls.
+- The persistent inventory table contains zero enrollments; there are no queued
+  or running imports. No live stock correction was sent by this deployment.
+  Mutation/reservation/retry behavior is covered by the offline persistent tests,
+  not claimed as a live stock-write verification.
+- The old development connector/cron and legacy Shopify fixtures remain intact;
+  they were not retired or deleted during this deploy. Canonical app imports
+  can enroll independently, but old fixtures still require the cutover above.
+  Production and order-forwarding settings were not changed.
 
 The pre-update Shopify version `ultralove-dropshipping-lab-2` remains available
 for rollback: restore it in the Dev Dashboard to return to the old supplier-lab
