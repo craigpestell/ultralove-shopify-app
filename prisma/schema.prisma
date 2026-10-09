@@ -32,3 +32,9 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+
+model CatalogSelection {
+  shop       String   @id
+  productIds String   @default("[]")
+  updatedAt  DateTime @updatedAt
+}
