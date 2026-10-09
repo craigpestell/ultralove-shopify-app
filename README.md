@@ -233,11 +233,27 @@ Saved IDs `17186,17188,17535,17537` were preserved; existing completed jobs reta
 draft-only settings. No jobs were queued or running after verification.
 
 The additive visibility migration is applied. App, import worker and Nginx are
-active; HTTPS readiness and Nginx configuration checks passed. The latest protected
-SQLite backup is `20261009T193644513635Z.sqlite`; the runtime environment backup is
+active; HTTPS readiness and Nginx configuration checks passed. That deployment's
+protected SQLite backup is `20261009T193644513635Z.sqlite`; the runtime environment backup is
 `app-env-20261009T192535003749Z.bak`. The previous code release is `c930575`.
 These changes were committed locally and deployed from exact git archives; no
 GitHub push was performed as part of this deployment.
+
+### Save-and-continue deployment, 2026-10-09
+
+Release `90720c0` replaces the catalog save button with **Save selection and review
+pricing**. It validates and persists the selection before redirecting to
+`/app/imports`; form/feed failures remain on the catalog page, and persistence
+failures cannot produce a successful redirect. Empty selections can still be
+saved to clear previously saved choices.
+
+All 40 tests, type-check, lint and app/worker builds passed during provisioning.
+Live embedded verification preserved the then-current saved IDs
+`17186,17188,17539`, confirmed the database save timestamp advanced, and landed on
+**Pricing and product imports** with those same IDs. No preview or import was
+created: the job count remained 11, with none queued or running. App, import
+worker and Nginx remained active. The protected SQLite deployment backup is
+`20261009T194530655109Z.sqlite`; the previous code release is `5b200e9`.
 
 ## Existing Shopify app
 
@@ -333,7 +349,7 @@ and approval.
 
 ## Current host and rollback
 
-The deployed release is `5b200e9` on the isolated integration-lab
+The deployed release is `90720c0` on the isolated integration-lab
 droplet. Node 24.21.0 runs as `ultralove-shopify` on `127.0.0.1:3097`,
 proxied by its separate HTTPS Nginx vhost. Source is under
 `/srv/ultralove-shopify/releases`; `current` selects the release.
