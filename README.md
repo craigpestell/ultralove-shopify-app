@@ -231,11 +231,13 @@ read mode used by the earlier standalone import verifier. The existing guard
 is unchanged. No WordPress runtime code deployment is needed for this adapter.
 
 The app source is published in the private GitHub repository. Its `main` branch
-contains the previously deployed foundation; `feat/embedded-catalog` contains
-the catalog and hosting increment for review. The pricing/import increment is
-on `feat/draft-import-jobs`, based on that review branch. The running release was deployed
-from a git archive, independently of merging that branch. Production rollout
-and independent retailer onboarding require separate work and approval.
+contains the approved catalog/hosting, pricing/import and page-selection work.
+The stacked feature PRs were integrated in dependency order, with checks passing
+before each merge. Dependency updates are validated against the integrated app
+and worker rather than only the foundation. Source merges do not deploy changes:
+the running release below was deployed from a git archive independently.
+Production rollout and independent retailer onboarding require separate work
+and approval.
 
 ## Current host and rollback
 
