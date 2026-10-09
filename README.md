@@ -20,7 +20,7 @@ does not import, publish, sync inventory or approve forwarding. It validates
 published selections against the real feed before committing app-owned SQLite
 state; no WordPress product mappings or settings are changed.
 
-The pricing/import increment adds immutable CAD previews and background
+The deployed pricing/import increment adds immutable CAD previews and background
 draft-import jobs; ongoing inventory synchronization remains a subsequent step.
 The existing
 feed and root-only PHP workers remain in `craigpestell/ultralove`; this web
@@ -104,8 +104,20 @@ Prisma generation, schema validation and migrations must pass with that override
 - Saving selections persisted across reloads. Exactly 50 parents could be saved;
   all product checkboxes on the next page were disabled at the limit, and a
   forged 51-parent submission produced a visible rejection.
-- Clear selection reset the unsaved selection to `[]`. Existing saved selections
-  were preserved during final checks. No import was invoked by this interface.
+- Clear selection reset the unsaved selection to `[]`. The original five saved
+  selections were restored after the import checks below.
+- Pricing/import release `13306ab` passed live embedded preview, confirmation,
+  queueing and results checks. A 25% job reused all five existing selections
+  without changing their prices, content, publication state or inventory.
+- Source parent `17539` (SKU `SE1414-50 BX`) created unpublished Shopify draft
+  `8424579366975`: CAD 7.95 wholesale became CAD 9.94 at 25% markup, with stock 2,
+  barcode `716770016270` and one READY media item. Native Shopify admin confirmed
+  Draft status and no publication to any channel.
+- A second job previewed 30% but reused that draft without repricing it or
+  creating a duplicate. An interrupted-job simulation retained its creation
+  claim; worker restart recovered the same draft through read-only reconciliation.
+  Exactly one listing existed for that source, and all three jobs completed.
+  The draft and job history remain intentionally available for staff review.
 - Deployed foreign-shop requests returned 403, invalid-signature webhooks returned
   401, and responses carried `Cache-Control: no-store`. App, Nginx and lab PHP-FPM
   were active; the app listener remained loopback-only.
@@ -205,18 +217,27 @@ and independent retailer onboarding require separate work and approval.
 
 ## Current host and rollback
 
-The deployed catalog release is `05f1160` on the isolated integration-lab
+The deployed pricing/import release is `13306ab` on the isolated integration-lab
 droplet. Node 24.21.0 runs as `ultralove-shopify` on `127.0.0.1:3097`,
 proxied by its separate HTTPS Nginx vhost. Source is under
 `/srv/ultralove-shopify/releases`; `current` selects the release.
 Sessions are in `/var/lib/ultralove-shopify/sessions.sqlite` (mode 0600).
 The app environment is root-readable only at `/etc/ultralove-shopify/app.env`.
 Request logging omits query parameters. Existing supplier WordPress is untouched.
+The separate `ultralove-shopify-imports` service runs as the same non-root user,
+with a singleton worker lock. Persistent jobs and creation claims share the
+session database; pre-migration backups are root-only under
+`/srv/ultralove-shopify/backups`.
 
 The pre-update Shopify version `ultralove-dropshipping-lab-2` remains available
 for rollback: restore it in the Dev Dashboard to return to the old supplier-lab
 URL and non-embedded mode. Do not uninstall/recreate the app or rotate its secret.
+Before returning to any pre-jobs code release or the old non-embedded app version,
+run `systemctl disable --now ultralove-shopify-imports` on the lab host so imports
+cannot continue behind an older UI. Keep the database, creation claims, backups
+and additive migrations intact. The verified catalog release `05f1160` is the
+pre-jobs code rollback.
 The preceding local hosting release `a419640` failed due to file read permissions
 and is **not** a usable code rollback. The verified foundation `a271a77` remains
 an earlier code rollback, but does not provide catalog browsing. Code rollback
-does not undo persistent session or selection migrations.
+does not undo persistent session, selection or import migrations.
