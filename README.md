@@ -155,10 +155,11 @@ This connection deliberately does not request the optional strict database
 read mode used by the earlier standalone import verifier. The existing guard
 is unchanged. No WordPress runtime code deployment is needed for this adapter.
 
-The initial app source has not been pushed; the private GitHub repository is
-still empty pending explicit push approval. The catalog increment is committed
-locally and deployed from git archives. Production rollout and independent retailer onboarding require
-separate work and approval.
+The app source is published in the private GitHub repository. Its `main` branch
+contains the previously deployed foundation; `feat/embedded-catalog` contains
+the catalog and hosting increment for review. The running release was deployed
+from a git archive, independently of merging that branch. Production rollout
+and independent retailer onboarding require separate work and approval.
 
 ## Current host and rollback
 
