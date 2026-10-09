@@ -30,7 +30,7 @@ markup** persists the selection and pricing without creating a preview or job.
 Validation failures stay on that page without changing the saved configuration.
 Existing `/app/imports` bookmarks redirect to `/app` with their job and embedded
 authentication query context retained; legacy preview/queue/retry forms remain
-supported. This redesign is local source work, not a deployed release.
+supported. This redesign is deployed to the integration lab as release `f986174`.
 
 The feed-selection catalog rows show the first supplier product image as a
 48-pixel thumbnail. Hover, focus with the keyboard, or tap/click the thumbnail
@@ -172,6 +172,8 @@ The project-specific agent is defined in
 merchant UX tasks by other agents. It owns catalog selection, pricing previews,
 import feedback, accessibility, and responsive embedded layouts; it implements
 and verifies focused improvements rather than only suggesting a redesign.
+Keeping related tasks together is preferred, not a one-page restriction:
+additional views are appropriate when they make the merchant workflow clearer.
 
 The project includes two complementary skills:
 
@@ -319,6 +321,31 @@ created: the job count remained 11, with none queued or running. App, import
 worker and Nginx remained active. The protected SQLite deployment backup is
 `20261009T194530655109Z.sqlite`; the previous code release is `5b200e9`.
 
+### Unified pricing and import deployment, 2026-10-09
+
+Release `f986174` deploys the catalog, default/per-product markup, preview,
+confirmation, and import results workspace. The additive
+`20261009203000_product_markups` migration preserves historical global-only jobs
+and initializes saved pricing to zero markup with no overrides.
+
+The exact UX-only source tree passed all 43 tests, TypeScript, ESLint, and
+app/worker builds both locally and during lab provisioning. Unrelated
+inventory-sync and WordPress changes were excluded from this commit and
+deployment and remain in their original worktrees.
+
+Offline browser checks exercised bulk/default/individual markup, filtering,
+immutable previews, confirmation, failed-job reconciliation, keyboard scrolling,
+and a 390-pixel viewport. The available live browser required Shopify login, so
+post-deployment authenticated embedded rendering remains unverified.
+HTTPS returned 200, foreign-shop requests returned 403, and the app, import
+worker, and Nginx were active. Saved IDs `17186,17188,17539` and the 11 existing
+jobs were preserved; none were queued or running. No product was imported,
+activated, or published during this deployment.
+
+The pre-migration protected SQLite backup is
+`20261009T203756676353Z.sqlite`. The previous code release is `90720c0`;
+the `previous` symlink retains that rollback target.
+
 ## Existing Shopify app
 
 Verified in the Dev Dashboard on 2026-10-09:
@@ -413,7 +440,7 @@ and approval.
 
 ## Current host and rollback
 
-The deployed release is `90720c0` on the isolated integration-lab
+The deployed release is `f986174` on the isolated integration-lab
 droplet. Node 24.21.0 runs as `ultralove-shopify` on `127.0.0.1:3097`,
 proxied by its separate HTTPS Nginx vhost. Source is under
 `/srv/ultralove-shopify/releases`; `current` selects the release.
