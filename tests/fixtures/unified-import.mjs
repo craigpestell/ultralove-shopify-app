@@ -7,7 +7,8 @@ export const shop = "ultralove-integration-lab.myshopify.com";
 export let saved = {selected:[100], markup:"25.00", markups:{}};
 export const jobs = [];
 export function save(input) { saved = {...saved, selected:JSON.parse(input.productIds), markup:input.markup, markups:JSON.parse(input.markups)}; }
-export const products = [100,200,300].map(id=>({id,name:"Fixture product "+id,type:"simple",sku:"SKU-"+id,price:"12.50",images:[],stock_status:"instock",stock_quantity:10}));
+export const products = Array.from({length:55},(_,index)=>(index+1)*100).map(id=>({id,name:({"100":"Amber travel case","200":"Rose wellness kit","300":"Satin gift set"})[id]||"Fixture product "+id,type:id===300?"variable":"simple",sku:"SKU-"+id,price:"12.50",currency:"CAD",images:[],manage_stock:true,stock_owner_id:id,stock_quantity:10}));
+export const inventory = [100,200].map(supplierId=>({supplierId,name:products.find(p=>p.id===supplierId).name,sku:"SKU-"+supplierId,productId:"gid://shopify/Product/"+supplierId,enabled:supplierId===100,status:supplierId===100?"SYNCED":"NOT_ENROLLED",variantCount:1,error:null,lastSuccessAt:supplierId===100?new Date().toISOString():null,nextRunAt:null}));
 export function screen(id) {
   const job = jobs.find(job=>job.id===id)||null;
   return {...saved,job,history:jobs.map(job=>({...job,completed:job.items.filter(item=>item.status==="CREATED").length,total:job.items.length}))};
@@ -19,7 +20,7 @@ export function preview(markup, choices, configuration) {
   const id = String(jobs.length+1).padStart(32,"a");
   jobs.unshift({id,status:"PREVIEW",markup,markups,createdAt:new Date().toISOString(),active:choices.active,publicationId:choices.publish?"gid://shopify/Publication/10":null,
     confirmation:choices.publish?"publish-online-store":choices.active?"active-unpublished":"draft-only",generation:"offline",cursor:1,error:null,
-    items:ids.map(supplierId=>({supplierId,name:"Fixture product "+supplierId,sku:"SKU-"+supplierId,status:"PREVIEW",markup:markups[supplierId]??markup,
+    items:ids.map(supplierId=>({supplierId,name:products.find(p=>p.id===supplierId)?.name||"Fixture product "+supplierId,sku:"SKU-"+supplierId,status:"PREVIEW",markup:markups[supplierId]??markup,
       productId:null,error:null,attempts:0,wholesale:"12.50 CAD",retail:retailPrice("12.50",markups[supplierId]??markup)+" CAD",variantCount:1,warnings:[]}))});
   return jobs[0];
 }
@@ -51,16 +52,26 @@ const server = await createServer({
       if (id === "\0ux-entry.jsx") return `
         import React from "react";
         import {createRoot} from "react-dom/client";
-        import {createBrowserRouter,RouterProvider} from "react-router";
+        import {createBrowserRouter,RouterProvider,Outlet,useLoaderData} from "react-router";
         import Index,{loader,action} from "/app/routes/app._index.tsx";
+        import Inventory,{loader as inventoryLoader,action as inventoryAction} from "/app/routes/app.inventory.tsx";
+        import {WorkspaceProvider} from "/app/workspace.tsx";
+        import {saved,shop} from "virtual:ux-state";
         import "/app/catalog.css";
-        createRoot(document.getElementById("root")).render(React.createElement(RouterProvider,{router:createBrowserRouter([{path:"/app",Component:Index,loader,action}])}));`;
+        function Workspace(){const data=useLoaderData();return React.createElement(WorkspaceProvider,{shop,saved:data.saved},React.createElement(Outlet));}
+        createRoot(document.getElementById("root")).render(React.createElement(RouterProvider,{router:createBrowserRouter([{path:"/app",Component:Workspace,loader:async()=>({saved}),children:[{index:true,Component:Index,loader,action},{path:"inventory",Component:Inventory,loader:inventoryLoader,action:inventoryAction}]}])}));`;
       if (id.endsWith("/app/shopify.server.ts")) return `import {shop} from "virtual:ux-state";export const authenticateLabAdmin=async()=>({session:{shop},admin:{graphql:async()=>{throw new Error("Live Shopify API disabled in fixture");}}});`;
       if (id.endsWith("/app/db.server.ts")) return `import {save} from "virtual:ux-state";export default {catalogSelection:{upsert:async input=>save(input.update)}};`;
       if (id.endsWith("/app/imports.server.ts")) return `import {screen,preview,queue} from "virtual:ux-state";
+        export class ImportError extends Error {}
+        export const savedConfiguration=async()=>screen(null);
         export const importScreen=async(shop,id)=>screen(id);
         export const createPreview=async(shop,markup,api,choices,configuration)=>preview(markup,choices,configuration);
         export const queueJob=async(shop,id,retry,confirmation)=>queue(id,retry,confirmation);`;
+      if (id.endsWith("/app/inventory.server.ts")) return `import {inventory} from "virtual:ux-state";
+        export const inventoryScreen=async()=>inventory;
+        export async function inventoryControl(shop,id,intent,admin,confirm){const product=inventory.find(p=>p.supplierId===id);if(!product)throw new Error("Unknown product");
+          if(intent==="enable"&&confirm!=="inventory-only")throw new Error("Confirmation required");product.enabled=intent!=="pause";product.status=intent==="pause"?"PAUSED":"QUEUED";}`;
       if (id.endsWith("/app/catalog.server.ts")) return `import {products} from "virtual:ux-state";
         export class CatalogError extends Error {}
         export async function validateSelection(){}
@@ -69,8 +80,8 @@ const server = await createServer({
     },
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
-        if (!/^\/app(?:\?|$)/.test(req.url || "")) return next();
-        const html = await server.transformIndexHtml(req.url, `<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Offline unified import fixture</title><script src="https://cdn.shopify.com/shopifycloud/polaris.js"></script></head><body><div id="root"></div><script type="module" src="/ux-entry.jsx"></script></body></html>`);
+        if (!/^\/app(?:\/inventory)?(?:\?|$)/.test(req.url || "")) return next();
+        const html = await server.transformIndexHtml(req.url, `<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Offline task workspace fixture</title><script src="https://cdn.shopify.com/shopifycloud/polaris.js"></script></head><body><div id="root"></div><script type="module" src="/ux-entry.jsx"></script></body></html>`);
         res.setHeader("Content-Type", "text/html"); res.end(html);
       });
     },

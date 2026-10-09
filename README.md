@@ -23,14 +23,23 @@ The table's **Select all on this page** checkbox selects or deselects only the
 visible page, preserving choices on other pages. It shows a partial state when
 some rows are selected. If the full page would exceed the 50-parent total, the
 control is disabled with an explanation; clear choices or select rows individually.
-Bulk selection changes the working selection only. The redesigned `/app` keeps
-catalog browsing, saved selections, retail markup, visibility, preview,
-confirmation, queue/retry and results together on one page. **Save selection and
-markup** persists the selection and pricing without creating a preview or job.
-Validation failures stay on that page without changing the saved configuration.
+Bulk selection changes the working selection only. The merchant workspace separates
+**Catalog**, **Selection & pricing**, **Review import**, **Imports**, and **Inventory**
+by task. Catalog rows pair wholesale prices with retail estimates; the selection
+view manages named products across pages, default markup and individual overrides.
+Review shows the immutable exact-variant CAD snapshot before explicit confirmation.
+Imports provides progress, product-level results and safe retry; inventory exposes
+stock-only opt-in controls with searchable, readable sync states.
+**Save changes** persists selection and pricing without creating a preview or job.
+Validation failures retain the working draft without changing saved configuration.
+Shared route state and versioned per-shop `sessionStorage` preserve unfinished
+selection, markup edits and browsing context across views and tab reloads. Stored
+drafts contain public product metadata, not embedded authentication parameters, and
+are rejected when their saved-pricing baseline no longer matches the server.
 Existing `/app/imports` bookmarks redirect to `/app` with their job and embedded
 authentication query context retained; legacy preview/queue/retry forms remain
-supported. This redesign is deployed to the integration lab as release `f986174`.
+supported. The earlier unified-page design was deployed as release `f986174`;
+the task-oriented redesign requires the normal integration-lab release process.
 
 The feed-selection catalog rows show the first supplier product image as a
 48-pixel thumbnail. Hover, focus with the keyboard, or tap/click the thumbnail
@@ -56,18 +65,19 @@ are authorized for the existing lab installation.
 
 ## Pricing and product-import jobs
 
-On `/app`, select 1–50 parents and set the **Default retail markup** between
-0 and 1000 percent, with at most two decimal places. The default applies to every
+In **Catalog**, select 1–50 parents, then open **Selection & pricing** and set the
+**Default retail markup** between 0 and 1000 percent, with at most two decimal
+places. The default applies to every
 selected parent unless its **Markup override** is set; a parent's override
 applies to all its variants. Changing the default preserves overrides.
-Leave an override blank to use the default, or choose **Apply default to all
-selected products** to explicitly remove every override (including off-page
-products). **Reset to saved selection and markup** discards working pricing and
+Leave an override blank to use the default, or choose **Use default for all
+products** to explicitly remove every override (including off-page products).
+Under **Reset**, **Restore saved selection and markup** discards working pricing and
 selection edits. Off-page selections remain editable/removable when filtering
 or paginating, and same-page navigation preserves unsaved settings.
 
-Choose **Save selection and markup** to save without importing, or **Preview
-import** to atomically save and create an immutable snapshot. A failed preview
+Choose **Save changes** to save without importing, or **Create pricing preview**
+to atomically save and open an immutable snapshot in **Review import**. A failed preview
 does not replace the saved configuration. Default and overrides receive the
 same server-side validation. The preview uses the
 existing supplier payload builder, including published variants, barcodes,
@@ -234,8 +244,13 @@ The project-specific agent is defined in
 merchant UX tasks by other agents. It owns catalog selection, pricing previews,
 import feedback, accessibility, and responsive embedded layouts; it implements
 and verifies focused improvements rather than only suggesting a redesign.
-Keeping related tasks together is preferred, not a one-page restriction:
-additional views are appropriate when they make the merchant workflow clearer.
+Choose the app structure from merchant tasks and usability evidence, without
+any preference for a particular number of pages.
+Use the owner's authenticated Chrome session for live inspection when the
+integrated browser cannot log in. Bounded lab saves, previews, queued imports,
+and inventory-control tests are authorized; record persisted changes, restore
+reversible settings, and prefer unpublished drafts. This does not authorize
+production changes, destructive cleanup, or publication solely for testing.
 
 The project includes two complementary skills:
 
@@ -279,8 +294,9 @@ historical global-only jobs and their existing payloads. No live migration is
 performed by local validation.
 
 For a safe browser walkthrough, run `node tests/fixtures/unified-import.mjs` and
-open the localhost URL it prints. It uses the real unified route/components with
-synthetic authentication, feed, persistence, queue and results. It cannot call
+open the localhost URL it prints. It uses the real workspace provider, catalog,
+selection, review/results and inventory routes/components with synthetic
+authentication, feed, persistence, queue, results and inventory enrollment. It cannot call
 Shopify or write the live store/database. Queueing deliberately produces a mock
 failure; retry demonstrates reconciliation/completion. This fixture tests UI
 behavior, not real embedded authentication, feed or worker connectivity.

@@ -248,7 +248,9 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
     }) });
     assert.equal(hugeId.init.status, 400);
     await inventoryControl(shop, 100, "pause", api);
-    const handler = createStaticHandler([{ id: "inventory", path: "/app/inventory", loader, Component: Inventory }]);
+    const { WorkspaceProvider } = await server.ssrLoadModule("/app/workspace.tsx");
+    const handler = createStaticHandler([{ id: "inventory", path: "/app/inventory", loader, Component: () =>
+      createElement(WorkspaceProvider, { shop, saved: { selected: [], markup: "0", markups: {} } }, createElement(Inventory)) }]);
     const context = await handler.query(new Request("https://app.example/app/inventory"));
     const router = createStaticRouter(handler.dataRoutes, context);
     const html = renderToStaticMarkup(createElement(StaticRouterProvider, { router, context }));

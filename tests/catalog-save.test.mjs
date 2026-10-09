@@ -39,13 +39,19 @@ test("unified catalog saves validated selections in place and keeps failures on 
           }; }`;
         if (id.endsWith("/app/catalog.server.ts")) return `
           export class CatalogError extends Error {}
-          export const validation = { calls: [], reject: false };
+          export const validation = { calls: [], reject: false, browseCalls: 0, browseReject: false };
           export async function validateSelection(ids) {
             validation.calls.push(ids);
             if (validation.reject) throw new CatalogError("Selection no longer available");
           }
-          export async function productsPage() {}
-          export async function categoriesPage() {}`;
+          export async function productsPage() {
+            validation.browseCalls++;
+            if (validation.browseReject) throw new CatalogError("Feed unavailable");
+          }
+          export async function categoriesPage() {
+            validation.browseCalls++;
+            if (validation.browseReject) throw new CatalogError("Feed unavailable");
+          }`;
       },
     }],
   });
@@ -109,7 +115,7 @@ test("unified catalog saves validated selections in place and keeps failures on 
       productIds: "[1,2]", markup: "25.00", markups: '{"2":"50.50"}',
     });
     const preview = await action({ request: request(configuration.map(([key, value]) => [key, key === "intent" ? "preview" : value])) });
-    assert.equal(preview.headers.get("Location"), `/app?category_id=5&job=${"a".repeat(32)}`);
+    assert.equal(preview.headers.get("Location"), `/app?category_id=5&job=${"a".repeat(32)}&view=review`);
     assert.deepEqual(imports.previews.at(-1)[4], { ids: [1, 2], markups: { 2: "50.50" } });
     assert.deepEqual(imports.previews.at(-1)[3], { active: false, publish: false });
     await action({ request: request([["intent", "preview"], ["markup", "25"]]) });
@@ -129,22 +135,33 @@ test("unified catalog saves validated selections in place and keeps failures on 
     }
     for (const intent of ["queue", "retry"]) {
       const response = await action({ request: request([["intent", intent], ["job", "a".repeat(32)], ["confirm", "draft-only"]]) });
-      assert.equal(response.headers.get("Location"), `/app?category_id=5&job=${"a".repeat(32)}`);
+      assert.equal(response.headers.get("Location"), `/app?category_id=5&job=${"a".repeat(32)}&view=imports`);
       assert.deepEqual(imports.queued.at(-1), [shop, "a".repeat(32), intent === "retry", "draft-only"]);
     }
     for (const query of ["?job=bad", `?job=${"a".repeat(32)}&job=${"b".repeat(32)}`]) {
       await assert.rejects(loader({ request: new Request(`https://app.example/app${query}`) }), (error) => error.status === 400);
     }
+    validation.browseReject = true;
+    for (const query of ["?view=imports", `?view=review&job=${"a".repeat(32)}`, `?job=${"a".repeat(32)}`]) {
+      const screen = await loader({ request: new Request(`https://app.example/app${query}`) });
+      assert.equal(screen.products, null);
+      assert.equal(screen.error, null);
+    }
+    assert.equal(validation.browseCalls, 0, "review and recovery must not depend on supplier browsing");
+    validation.browseReject = false;
     const { loader: legacyLoader, action: legacyAction } = await server.ssrLoadModule("/app/routes/app.imports.tsx");
     const legacyResponse = await legacyLoader({ request: new Request(`https://app.example/app/imports?job=${"a".repeat(32)}&host=fixture&shop=${shop}`) });
-    assert.equal(legacyResponse.headers.get("Location"), `/app?job=${"a".repeat(32)}&host=fixture&shop=${shop}`);
+    assert.equal(legacyResponse.headers.get("Location"), `/app?job=${"a".repeat(32)}&host=fixture&shop=${shop}&view=imports`);
     assert.equal((await legacyAction({ request: request([["intent", "preview"], ["markup", "25"]]) })).status, 302);
     auth.reject = true;
     await assert.rejects(legacyLoader({ request: new Request("https://app.example/app/imports") }), (error) => error.status === 403);
     auth.reject = false;
 
+    const { WorkspaceProvider } = await server.ssrLoadModule("/app/workspace.tsx");
     const handler = createStaticHandler([{
-      id: "catalog", path: "/app", Component: Index,
+      id: "catalog", path: "/app", Component: () => createElement(WorkspaceProvider, {
+        shop, saved: { selected: [1], markup: "25.00", markups: {} },
+      }, createElement(Index)),
       loader: async () => ({
         shop, selected: [1], markup: "25.00", markups: {}, job: null, history: [], filters: { categoryAfter: 0 },
         products: { products: [], next_after_id: 0, has_more: false },
@@ -154,12 +171,12 @@ test("unified catalog saves validated selections in place and keeps failures on 
     const context = await handler.query(new Request("https://app.example/app"));
     const router = createStaticRouter(handler.dataRoutes, context);
     const html = renderToStaticMarkup(createElement(StaticRouterProvider, { router, context }));
-    assert.match(html, /Save selection and markup/);
-    assert.match(html, /Default retail markup/);
-    assert.match(html, /Preview and import results/);
-    assert.match(html, /Selected products on other pages/);
+    assert.match(html, /Save changes/);
+    assert.match(html, /Selection &amp; pricing/);
+    assert.match(html, /Supplier catalog/);
+    assert.match(html, /1 outside this page/);
     assert.doesNotMatch(html, /href="\/app\/imports/);
-    assert.match(html, /No import runs until you confirm and queue it/);
+    assert.doesNotMatch(html, /name="confirm"/, "confirmation is deliberately staged after pricing");
   } finally {
     await server.close();
   }

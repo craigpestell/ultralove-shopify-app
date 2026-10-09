@@ -4,20 +4,22 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 
 import { authenticateLabAdmin } from "../shopify.server";
+import { savedConfiguration } from "../imports.server";
+import { WorkspaceProvider } from "../workspace";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticateLabAdmin(request);
+  const { session } = await authenticateLabAdmin(request);
 
   // eslint-disable-next-line no-undef
-  return { apiKey: process.env.SHOPIFY_API_KEY || "" };
+  return { apiKey: process.env.SHOPIFY_API_KEY || "", shop: session.shop, saved: await savedConfiguration(session.shop) };
 };
 
 export default function App() {
-  const { apiKey } = useLoaderData<typeof loader>();
+  const { apiKey, shop, saved } = useLoaderData<typeof loader>();
 
   return (
     <AppProvider apiKey={apiKey}>
-      <Outlet />
+      <WorkspaceProvider shop={shop} saved={saved}><Outlet /></WorkspaceProvider>
     </AppProvider>
   );
 }
