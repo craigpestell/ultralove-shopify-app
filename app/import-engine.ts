@@ -1,0 +1,276 @@
+export class ImportError extends Error {}
+export type GraphQL = (query: string, variables: Record<string, unknown>) => Promise<unknown>;
+type Metadata = { namespace: string; key: string; value: string };
+type Variant = {
+  sku: string; price: string; barcode?: string; inventoryPolicy: string;
+  inventoryItem: { tracked: boolean };
+  inventoryQuantities: { locationId: string; name: string; quantity: number }[];
+  metafields: Metadata[];
+};
+export type Payload = Record<string, unknown> & {
+  title: string; handle: string; status: "DRAFT"; tags: string[];
+  variants: Variant[]; metafields: Metadata[];
+};
+export type PlannedItem = { supplierId: number; name: string; sku: string; wholesale: (string | null)[]; payload: Payload };
+export type RemoteProduct = {
+  id: string; handle: string; status: string; tags: string[];
+  supplierId: { value: string } | null; variants: { nodes: { sku: string; price: string }[] };
+};
+export const MAX_PREVIEW_AGE = 10 * 60 * 1000;
+const LEGACY: Record<number, string> = { 17186: "1513", 17188: "2455", 17192: "70072", 17194: "70081" };
+
+export function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function object(value: unknown) {
+  if (!record(value)) throw new ImportError("Invalid Shopify or supplier response.");
+  return value;
+}
+function list(value: unknown): unknown[] {
+  if (!Array.isArray(value)) throw new ImportError("Invalid Shopify or supplier list.");
+  return value;
+}
+function text(value: unknown): string {
+  if (typeof value !== "string") throw new ImportError("Invalid Shopify or supplier text.");
+  return value;
+}
+function metadata(value: unknown): Metadata[] {
+  return list(value).map((entry) => {
+    const field = object(entry);
+    return { ...field, namespace: text(field.namespace), key: text(field.key), value: text(field.value) };
+  });
+}
+
+export function markupPercent(value: unknown): string {
+  if (typeof value !== "string" || !/^(?:0|[1-9]\d{0,3})(?:\.\d{1,2})?$/.test(value.trim()) ||
+      Number(value) > 1000) throw new ImportError("Initial markup must be 0-1000 percent, with at most two decimal places.");
+  return Number(value).toFixed(2);
+}
+function cents(value: string): bigint {
+  if (value.length > 128 || !/^\d+(?:\.\d{1,2})?$/.test(value)) throw new ImportError("Invalid CAD price.");
+  const [whole, fraction = ""] = value.split(".");
+  return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0"));
+}
+export function priceRange(prices: (string | null)[]): string {
+  const valid = [...new Set(prices.filter((price): price is string => price !== null && price !== ""))];
+  if (!valid.length) return "Missing price - review required";
+  if (valid.some((price) => price.length > 128 || !/^\d+(?:\.\d+)?$/.test(price) || !Number.isFinite(Number(price)))) {
+    throw new ImportError("Invalid supplier or retail CAD price.");
+  }
+  valid.sort((a, b) => Number(a) - Number(b));
+  return `${valid[0]}${valid.length > 1 ? ` - ${valid.at(-1)}` : ""} CAD${valid.length !== prices.length && prices.some((price) => !price) ? " (some missing)" : ""}`;
+}
+
+export function payload(value: unknown, supplierId: number, runId: string, location: string): Payload {
+  const input = object(value);
+  const allowed = ["title", "descriptionHtml", "handle", "status", "vendor", "tags", "productOptions", "variants", "metafields", "files"];
+  if (Object.keys(input).some((key) => !allowed.includes(key)) || input.status !== "DRAFT" ||
+      input.handle !== `ultralove-catalog-${supplierId}` || !text(input.title).trim() ||
+      !/^[a-f0-9]{32}$/.test(runId)) throw new ImportError("Import payload must create an owned unpublished draft.");
+  const tags = list(input.tags).map(text);
+  const fields = metadata(input.metafields);
+  if (!tags.includes("ultralove-catalog-import") || !tags.includes(`ultralove-catalog-run-${runId}`) ||
+      !fields.some((field) => field.namespace === "ultralove_catalog" && field.key === "supplier_id" && field.value === String(supplierId))) {
+    throw new ImportError("Import payload has an invalid supplier identity.");
+  }
+  const variants = list(input.variants).map((entry): Variant => {
+    const variant = object(entry);
+    const inventory = object(variant.inventoryItem);
+    const quantities = list(variant.inventoryQuantities).map((entry) => {
+      const quantity = object(entry);
+      if (quantity.locationId !== location || quantity.name !== "available" ||
+          !Number.isInteger(quantity.quantity) || Number(quantity.quantity) < 0 || Number(quantity.quantity) > 2147483647) {
+        throw new ImportError("Import inventory must use the approved location and real nonnegative quantities.");
+      }
+      return { ...quantity, locationId: location, name: "available", quantity: Number(quantity.quantity) };
+    });
+    const price = text(variant.price);
+    cents(price);
+    if ("id" in variant || "id" in inventory || inventory.tracked !== true ||
+        variant.inventoryPolicy !== "DENY" || quantities.length !== 1 ||
+        (variant.barcode !== undefined && typeof variant.barcode !== "string")) throw new ImportError("Unsafe import variant.");
+    return { ...variant, sku: text(variant.sku), price, inventoryPolicy: "DENY",
+      inventoryItem: { ...inventory, tracked: true }, inventoryQuantities: quantities, metafields: metadata(variant.metafields) };
+  });
+  if (!variants.length || variants.length > 2048) throw new ImportError("Import requires 1-2048 variants per parent.");
+  return { ...input, title: text(input.title), handle: text(input.handle), status: "DRAFT", tags, variants, metafields: fields };
+}
+
+export function plannedFeed(value: unknown, ids: number[], runId: string, location: string) {
+  const feed = object(value);
+  if (!ids.length || ids.length > 50 || new Set(ids).size !== ids.length ||
+      !ids.every((id) => Number.isSafeInteger(id) && id > 0) ||
+      typeof feed.generation !== "string" || !/^[a-f0-9-]{36}$/i.test(feed.generation) ||
+      !Number.isSafeInteger(feed.cursor) || Number(feed.cursor) < 0) throw new ImportError("Invalid bounded import checkpoint.");
+  const items = list(feed.items).map((entry): PlannedItem => {
+    const item = object(entry);
+    if (!ids.includes(Number(item.supplierId)) || typeof item.supplierId !== "number") throw new ImportError("Unexpected supplier product in import plan.");
+    const input = payload(item.payload, item.supplierId, runId, location);
+    const wholesale = list(item.wholesale).map((price) => price === null ? null : text(price));
+    if (wholesale.length !== input.variants.length) throw new ImportError("Incomplete variant pricing preview.");
+    priceRange(wholesale);
+    return { supplierId: item.supplierId, name: text(item.name), sku: text(item.sku), wholesale, payload: input };
+  });
+  if (items.length !== ids.length || new Set(items.map((item) => item.supplierId)).size !== ids.length) {
+    throw new ImportError("Import plan must include every selected parent exactly once.");
+  }
+  return { generation: feed.generation, cursor: Number(feed.cursor), items };
+}
+export function reviewLabels(input: Payload): string[] {
+  return input.tags.filter((tag) => tag.startsWith("ultralove-review-")).map((tag) => tag.slice("ultralove-review-".length));
+}
+
+export const CONTEXT_QUERY = `query ImportContext {
+  shop { myshopifyDomain currencyCode }
+  locations(first:100) { nodes { id name isActive fulfillsOnlineOrders } pageInfo { hasNextPage } }
+}`;
+export const CATALOG_QUERY = `query ImportCatalog($after:String) {
+  products(first:100,after:$after) { nodes {
+    id handle status tags supplierId:metafield(namespace:"ultralove_catalog",key:"supplier_id"){value}
+    variants(first:1){nodes{sku price}}
+  } pageInfo { hasNextPage endCursor } }
+}`;
+export const CREATE_MUTATION = `mutation ImportDraft($input:ProductSetInput!) {
+  productSet(input:$input,synchronous:true) { product {
+    id handle status tags supplierId:metafield(namespace:"ultralove_catalog",key:"supplier_id"){value}
+    variants(first:1){nodes{sku price}}
+  } userErrors { field message } }
+}`;
+export const VERIFY_QUERY = `query VerifyDraft($id:ID!,$after:String,$location:ID!) {
+  product(id:$id) { status variants(first:100,after:$after) {
+    nodes { sku price barcode inventoryPolicy supplierId:metafield(namespace:"ultralove_catalog",key:"supplier_id"){value}
+      inventoryItem { tracked inventoryLevel(locationId:$location) { quantities(names:["available"]){name quantity} } }
+    } pageInfo { hasNextPage endCursor }
+  } }
+}`;
+
+async function request(api: GraphQL, query: string, variables: Record<string, unknown> = {}) {
+  const response = object(await api(query, variables));
+  if (response.errors !== undefined && list(response.errors).length) throw new ImportError("Shopify rejected the request. Retry after checking API access or rate limits.");
+  return object(response.data);
+}
+export async function shopContext(api: GraphQL, shop: string) {
+  const data = await request(api, CONTEXT_QUERY);
+  const info = object(data.shop);
+  if (info.myshopifyDomain !== shop || info.currencyCode !== "CAD") throw new ImportError("Draft imports require the approved test store with CAD currency.");
+  const locations = object(data.locations);
+  if (object(locations.pageInfo).hasNextPage !== false) throw new ImportError("Location pagination requires operator review.");
+  const matches = list(locations.nodes).map(object).filter((location) => location.name === "Shop location" && location.isActive === true && location.fulfillsOnlineOrders === true);
+  if (matches.length !== 1 || !/^gid:\/\/shopify\/Location\/\d+$/.test(text(matches[0].id))) throw new ImportError("Exactly one active merchant Shop location is required.");
+  return text(matches[0].id);
+}
+function remoteProduct(value: unknown): RemoteProduct {
+  const product = object(value);
+  if (!/^gid:\/\/shopify\/Product\/\d+$/.test(text(product.id))) throw new ImportError("Invalid Shopify product identity.");
+  return { id: text(product.id), handle: text(product.handle), status: text(product.status), tags: list(product.tags).map(text),
+    supplierId: product.supplierId === null ? null : { value: text(object(product.supplierId).value) },
+    variants: { nodes: list(object(product.variants).nodes).map((entry) => {
+      const variant = object(entry);
+      return { sku: text(variant.sku), price: text(variant.price) };
+    }) } };
+}
+export async function remoteCatalog(api: GraphQL): Promise<RemoteProduct[]> {
+  const products: RemoteProduct[] = [];
+  const cursors = new Set<string>();
+  let after: string | null = null;
+  for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
+    const connection = object((await request(api, CATALOG_QUERY, { after })).products);
+    products.push(...list(connection.nodes).map(remoteProduct));
+    const page = object(connection.pageInfo);
+    if (page.hasNextPage === false) return products;
+    const cursor = text(page.endCursor);
+    if (page.hasNextPage !== true || !cursor || cursors.has(cursor) || products.length >= 10000) throw new ImportError("Shopify catalog pagination requires operator review.");
+    cursors.add(cursor);
+    after = cursor;
+  }
+  throw new ImportError("Shopify catalog exceeds the bounded review limit.");
+}
+export function matchProduct(products: RemoteProduct[], supplierId: number): RemoteProduct | null {
+  const matches = new Map<string, RemoteProduct>();
+  for (const product of products) {
+    if (product.handle === `ultralove-catalog-${supplierId}` || product.supplierId?.value === String(supplierId)) {
+      if (product.handle !== `ultralove-catalog-${supplierId}` || product.supplierId?.value !== String(supplierId) ||
+          !product.tags.includes("ultralove-catalog-import") || !product.tags.some((tag) => /^ultralove-catalog-run-[a-f0-9]{32}$/.test(tag))) {
+        throw new ImportError(`Supplier identity collision for ${supplierId}; no listing was changed.`);
+      }
+      matches.set(product.id, product);
+    }
+    if (LEGACY[supplierId] && product.tags.includes("ultralove-dev-supplier") && product.variants.nodes[0]?.sku === LEGACY[supplierId]) {
+      if (product.handle !== `ultralove-dev-${LEGACY[supplierId]}`) throw new ImportError("Legacy supplier identity collision.");
+      matches.set(product.id, product);
+    }
+  }
+  if (matches.size > 1) throw new ImportError(`Duplicate Shopify supplier identities for ${supplierId}.`);
+  return [...matches.values()][0] || null;
+}
+export async function verifyDraft(api: GraphQL, input: Payload, productId: string) {
+  const wanted = new Map(input.variants.map((variant) => {
+    const supplier = variant.metafields.find((field) => field.namespace === "ultralove_catalog" && field.key === "supplier_id");
+    if (!supplier || !/^[1-9]\d*$/.test(supplier.value)) throw new ImportError("Missing supplier variant identity.");
+    return [supplier.value, variant];
+  }));
+  if (wanted.size !== input.variants.length) throw new ImportError("Duplicate supplier variant identity.");
+  const seen = new Set<string>();
+  const cursors = new Set<string>();
+  let after: string | null = null;
+  let complete = false;
+  for (let pageNumber = 0; pageNumber < 21; pageNumber++) {
+    const product = object((await request(api, VERIFY_QUERY, { id: productId, after, location: input.variants[0].inventoryQuantities[0].locationId })).product);
+    if (product.status !== "DRAFT") throw new ImportError("The created product is not an unpublished draft; manual review required.");
+    const variants = object(product.variants);
+    for (const entry of list(variants.nodes)) {
+      const variant = object(entry);
+      const id = text(object(variant.supplierId).value);
+      const expected = wanted.get(id);
+      const inventory = object(variant.inventoryItem);
+      const quantities = list(object(inventory.inventoryLevel).quantities).map(object);
+      if (!expected || seen.has(id) || variant.sku !== expected.sku || cents(text(variant.price)) !== cents(expected.price) ||
+          (variant.barcode || null) !== (expected.barcode || null) || variant.inventoryPolicy !== "DENY" || inventory.tracked !== true ||
+          quantities.length !== 1 || quantities[0].name !== "available" || quantities[0].quantity !== expected.inventoryQuantities[0].quantity) {
+        throw new ImportError("Created draft failed variant, price, barcode or inventory verification. No repair was applied.");
+      }
+      seen.add(id);
+    }
+    const page = object(variants.pageInfo);
+    if (page.hasNextPage === false) {
+      complete = true;
+      break;
+    }
+    const cursor = text(page.endCursor);
+    if (page.hasNextPage !== true || !cursor || cursors.has(cursor) || seen.size >= 2048) throw new ImportError("Draft variant pagination failed verification.");
+    cursors.add(cursor);
+    after = cursor;
+  }
+  if (!complete || seen.size !== wanted.size) throw new ImportError("Created draft omitted source variants or incomplete pagination.");
+}
+
+export async function importDraft(options: {
+  api: GraphQL; products: RemoteProduct[]; input: Payload; supplierId: number; runId: string;
+  attempted: boolean; previouslyMapped: boolean; fresh: boolean; beforeMutation: () => Promise<void>;
+}): Promise<{ status: "CREATED" | "REUSED"; productId: string }> {
+  const { api, products, input, supplierId, runId } = options;
+  const existing = matchProduct(products, supplierId);
+  if (existing) {
+    if (existing.tags.includes(`ultralove-catalog-run-${runId}`)) {
+      await verifyDraft(api, input, existing.id);
+      return { status: "CREATED", productId: existing.id };
+    }
+    if (LEGACY[supplierId] && (input.variants.length !== 1 || input.variants[0].sku !== LEGACY[supplierId])) throw new ImportError("Legacy source SKU changed; review required.");
+    return { status: "REUSED", productId: existing.id };
+  }
+  if (options.attempted) throw new ImportError("A previous creation may have reached Shopify. Reconciliation found no owned listing; manual review is required before another creation.");
+  if (options.previouslyMapped) throw new ImportError("The previously mapped listing was removed. Automatic recreation is blocked.");
+  if (!options.fresh) throw new ImportError("Pricing preview expired. Create a fresh preview before importing new drafts.");
+  // Persist the cross-job claim before the only mutation; uncertain responses never authorize a second creation.
+  await options.beforeMutation();
+  const set = object((await request(api, CREATE_MUTATION, { input })).productSet);
+  const errors = list(set.userErrors);
+  if (errors.length) throw new ImportError(`Shopify draft creation requires review: ${errors.map((entry) => text(object(entry).message)).join("; ")}`);
+  const created = remoteProduct(set.product);
+  if (matchProduct([created], supplierId)?.id !== created.id || !created.tags.includes(`ultralove-catalog-run-${runId}`) || created.status !== "DRAFT") {
+    throw new ImportError("Shopify creation returned an unexpected identity or publication status.");
+  }
+  await verifyDraft(api, input, created.id);
+  products.push(created);
+  return { status: "CREATED", productId: created.id };
+}

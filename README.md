@@ -20,11 +20,52 @@ does not import, publish, sync inventory or approve forwarding. It validates
 published selections against the real feed before committing app-owned SQLite
 state; no WordPress product mappings or settings are changed.
 
-Pricing, draft-import jobs and ongoing inventory synchronization are subsequent
-steps. The existing
+The pricing/import increment adds immutable CAD previews and background
+draft-import jobs; ongoing inventory synchronization remains a subsequent step.
+The existing
 feed and root-only PHP workers remain in `craigpestell/ultralove`; this web
 process must never run those workers as root or read their credential files.
 No orders, payments, emails, shipments or storefront publication are enabled.
+
+## Pricing and draft-import jobs
+
+From the catalog, save 1-50 parent selections and open **Review pricing and draft
+imports**. Set an initial markup between 0 and 1000 percent, with at most two
+decimal places, then choose **Preview draft import**. The preview uses the
+existing supplier payload builder, including published variants, barcodes,
+approved public media and explicit stock/data-review warnings. Retail prices
+are supplier prices multiplied by `(1 + markup / 100)`, rounded to two decimals.
+No FX conversion, shipping, tax or fee adjustment is applied.
+
+Confirm the displayed snapshot and choose **Queue draft import** within ten
+minutes. The server verifies that saved selections still match the preview.
+Only one job per store can be queued/running. A separate non-root systemd worker
+processes it; public HTTP handlers never execute a root importer.
+Status refreshes automatically and shows per-product results and Shopify links.
+Existing owned and recognized legacy listings are reused without any mutation,
+including their retailer-edited prices, content, inventory and publication state.
+
+New copies are unpublished drafts at the verified merchant **Shop location** in
+the CAD lab store. Unsafe/unknown/shared stock stays zero with review warnings,
+as in the existing payload policy. New source variants, SKU, price, barcode,
+inventory policy and stock are verified before a created result is recorded.
+Media can still be processing; review images before any later publication.
+Importing does not start ongoing sync or approve order forwarding.
+
+The persistent database stores the immutable feed generation/cursor, selection,
+markup, payloads, per-product results and cross-job creation claims. Before the
+only create mutation, the worker records a claim and disables API transport
+retries. **Retry / reconcile failed items** skips completed items and reads
+Shopify to recover a matching owned draft. An unresolved uncertain creation or
+removed mapped listing blocks another creation and requires operator review.
+The worker resumes interrupted jobs after restart. Do not run the standalone
+operator catalog importer concurrently with these jobs.
+
+`ops/provision-lab.sh` backs up the persistent database to a root-only directory
+before migrations, builds the worker, and installs `ultralove-shopify-imports`.
+The existing Shopify Supplier plugin is still needed for feed-client and payload
+planning code. The proxy's `import-plan` operation only reads/plans; all Shopify
+mutations run in the separate app worker.
 
 ## Local validation
 
@@ -47,7 +88,7 @@ Prisma generation, schema validation and migrations must pass with that override
 
 ### Verification recorded, 2026-10-09
 
-- Eleven offline authentication/catalog policy tests passed; type-check, lint and
+- Twenty-two offline authentication/catalog/import and SQLite queue tests passed; type-check, lint and
   production build passed.
 - Prisma generation, schema validation and SQLite migrations passed.
 - `npm audit` reported zero vulnerabilities, including development dependencies.
@@ -157,7 +198,8 @@ is unchanged. No WordPress runtime code deployment is needed for this adapter.
 
 The app source is published in the private GitHub repository. Its `main` branch
 contains the previously deployed foundation; `feat/embedded-catalog` contains
-the catalog and hosting increment for review. The running release was deployed
+the catalog and hosting increment for review. The pricing/import increment is
+on `feat/draft-import-jobs`, based on that review branch. The running release was deployed
 from a git archive, independently of merging that branch. Production rollout
 and independent retailer onboarding require separate work and approval.
 

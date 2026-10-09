@@ -8,7 +8,7 @@ try {
         throw new RuntimeException( 'Catalog request exceeds its limit.' );
     }
     $request = json_decode( $input, true, 512, JSON_THROW_ON_ERROR );
-    if ( ! is_array( $request ) || array_diff( array_keys( $request ), array( 'operation', 'filters', 'ids' ) ) ) {
+    if ( ! is_array( $request ) || array_diff( array_keys( $request ), array( 'operation', 'filters', 'ids', 'location', 'run', 'markup' ) ) ) {
         throw new RuntimeException( 'Invalid catalog operation.' );
     }
     require '/var/www/html/wp-content/plugins/ultralove-shopify-supplier/includes/class-feed-client.php';
@@ -56,6 +56,28 @@ try {
             $result = $client->selected_products( $request['ids'] ?? array() );
             $result = array( 'ids' => array_values( array_filter( array_keys( $result['products'] ),
                 static fn( $id ) => $result['products'][$id]['parent_id'] === 0 ) ) );
+            break;
+        case 'import-plan':
+            if ( ! is_string( $request['location'] ?? null ) || ! is_string( $request['run'] ?? null )
+                || ! is_numeric( $request['markup'] ?? null ) ) {
+                throw new InvalidArgumentException( 'Invalid import planning parameters.' );
+            }
+            require '/var/www/html/wp-content/plugins/ultralove-shopify-supplier/includes/class-catalog-import.php';
+            $feed = $client->selected_products( $request['ids'] ?? array() );
+            $items = array();
+            foreach ( $request['ids'] as $id ) {
+                $record = $feed['products'][$id];
+                $payload = UltraLove_Shopify_Catalog_Import::payload( $record, $feed['products'],
+                    $request['location'], $request['run'], (float) $request['markup'] );
+                $wholesale = array();
+                foreach ( $payload['variants'] as $variant ) {
+                    $source_id = (int) $variant['metafields'][0]['value'];
+                    $wholesale[] = $feed['products'][$source_id]['price'];
+                }
+                $items[] = array( 'supplierId' => $id, 'name' => $record['name'], 'sku' => $record['sku'],
+                    'wholesale' => $wholesale, 'payload' => $payload );
+            }
+            $result = array( 'generation' => $feed['generation'], 'cursor' => $feed['cursor'], 'items' => $items );
             break;
         default:
             throw new RuntimeException( 'Unsupported catalog operation.' );

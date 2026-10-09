@@ -91,6 +91,7 @@ export default function Index() {
       <s-section heading="Browse and select">
         <s-paragraph>Test store: {shop}. Select up to 50 parent products; published variants are included when importing later.</s-paragraph>
         <s-paragraph>Saving a selection does not import, publish or sync products, and does not approve order forwarding.</s-paragraph>
+        <p><Link to="/app/imports">Review pricing and draft imports</Link></p>
         <div className="catalog-browser">
           {error && <p role="alert">{error} <Link to="/app">Retry catalog</Link></p>}
           {result?.error && <p role="alert">{result.error}</p>}
