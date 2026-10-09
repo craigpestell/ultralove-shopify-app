@@ -4,7 +4,7 @@ import { data, Form, Link, useActionData, useLoaderData, useNavigation, useRoute
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticateLabAdmin } from "../shopify.server";
 import db from "../db.server";
-import { browseFilters, selectionIds, supplierText } from "../catalog-policy";
+import { browseFilters, pageSelection, selectionIds, supplierText } from "../catalog-policy";
 import { categoriesPage, CatalogError, productsPage, validateSelection } from "../catalog.server";
 import "../catalog.css";
 
@@ -85,6 +85,10 @@ export default function Index() {
   const nextCategories = new URLSearchParams(params);
   if (categories) nextCategories.set("category_after", String(categories.next_after_id));
   const busy = navigation.state !== "idle";
+  const pageIds = products?.products.map((product) => product.id) || [];
+  const selectedOnPage = pageIds.filter((id) => ids.includes(id)).length;
+  const allOnPageSelected = pageIds.length > 0 && selectedOnPage === pageIds.length;
+  const pageExceedsLimit = ids.length + pageIds.length - selectedOnPage > 50;
 
   return (
     <s-page heading="UltraLove supplier catalog">
@@ -113,10 +117,20 @@ export default function Index() {
             <input type="hidden" name="intent" value="save-selection" />
             <input type="hidden" name="ids" value={JSON.stringify(ids)} />
             <p>{ids.length} of 50 selected. Save before leaving this screen to retain your selection.</p>
+            {pageExceedsLimit && <p id="page-selection-limit" role="status">Selecting all products on this page would exceed the 50-product limit. Clear some selections first or select products individually.</p>}
             <div className="catalog-table">
               <table>
                 <caption>Supplier products - prices are wholesale CAD, not your Shopify selling prices.</caption>
-                <thead><tr><th scope="col">Select</th><th scope="col">Product</th><th scope="col">SKU</th><th scope="col">Supplier price</th><th scope="col">Availability</th></tr></thead>
+                <thead><tr><th scope="col">
+                  <label><input type="checkbox" checked={allOnPageSelected}
+                    ref={(input) => { if (input) input.indeterminate = selectedOnPage > 0 && !allOnPageSelected; }}
+                    disabled={busy || !pageIds.length || pageExceedsLimit}
+                    aria-describedby={pageExceedsLimit ? "page-selection-limit" : undefined}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      setIds((current) => pageSelection(current, pageIds, checked));
+                    }} /> Select all on this page</label>
+                </th><th scope="col">Product</th><th scope="col">SKU</th><th scope="col">Supplier price</th><th scope="col">Availability</th></tr></thead>
                 <tbody>{products?.products.map((product) => (
                   <tr key={product.id}>
                     <td><input type="checkbox" aria-label={`Select supplier product ${product.id}`} checked={ids.includes(product.id)}

@@ -19,6 +19,12 @@ The browser provides name/SKU search, category navigation, bounded
 does not import, publish, sync inventory or approve forwarding. It validates
 published selections against the real feed before committing app-owned SQLite
 state; no WordPress product mappings or settings are changed.
+The table's **Select all on this page** checkbox selects or deselects only the
+visible page, preserving choices on other pages. It shows a partial state when
+some rows are selected. If the full page would exceed the 50-parent total, the
+control is disabled with an explanation; clear choices or select rows individually.
+Bulk selection changes the working selection only; **Save selection (no import)**
+is still required to persist it.
 
 The deployed pricing/import increment adds immutable CAD previews and background
 draft-import jobs; ongoing inventory synchronization remains a subsequent step.
@@ -125,6 +131,17 @@ Prisma generation, schema validation and migrations must pass with that override
   retailer prices. These checks do not establish independent-store onboarding or
   real-order fulfilment.
 
+### Page select-all verification, 2026-10-09
+
+Release `3136d22` passed all 24 tests, type-check, lint and app/worker builds
+locally, during lab provisioning and in GitHub CI. Live embedded checks confirmed
+that all 50 visible checkboxes are selected, partial selection is reflected in the
+header, and deselecting the header clears only that page. Choices from other pages
+remain selected; the total-limit explanation appears when another full page cannot
+fit. Filtered-page selection/deselection preserves off-page choices, and an empty
+page disables the control. No save or import was triggered during these checks;
+the original five saved selections remained unchanged.
+
 ## Existing Shopify app
 
 Verified in the Dev Dashboard on 2026-10-09:
@@ -217,7 +234,7 @@ and independent retailer onboarding require separate work and approval.
 
 ## Current host and rollback
 
-The deployed pricing/import release is `13306ab` on the isolated integration-lab
+The deployed release is `3136d22` on the isolated integration-lab
 droplet. Node 24.21.0 runs as `ultralove-shopify` on `127.0.0.1:3097`,
 proxied by its separate HTTPS Nginx vhost. Source is under
 `/srv/ultralove-shopify/releases`; `current` selects the release.
