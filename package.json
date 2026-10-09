@@ -43,7 +43,7 @@
     "vite-tsconfig-paths": "^6.0.4"
   },
   "devDependencies": {
-    "@shopify/polaris-types": "1.0.1",
+    "@shopify/polaris-types": "1.1.0",
     "@types/eslint": "^9.6.1",
     "@types/node": "^25.5.2",
     "@types/react": "^18.3.25",
