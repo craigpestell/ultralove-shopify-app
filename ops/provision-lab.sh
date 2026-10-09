@@ -18,6 +18,7 @@ if [[ ! -x /opt/ultralove-node/bin/node ]]; then
         https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz -o "$archive"
     printf 'fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6  %s\n' "$archive" | sha256sum -c -
     tar -xJf "$archive" --strip-components=1 -C /opt/ultralove-node
+    chown -R root:root /opt/ultralove-node
 fi
 export PATH="/opt/ultralove-node/bin:$PATH"
 [[ "$(node --version)" == v24.* ]] || { echo "Node 24 required" >&2; exit 1; }
@@ -53,6 +54,7 @@ chown -R ultralove-shopify:ultralove-shopify "$directory"
 runuser -u ultralove-shopify -- env PATH="$PATH" DATABASE_URL=file:/var/lib/ultralove-shopify/sessions.sqlite \
     bash -c 'cd "$1" && npm ci && npm run setup && npm run check' bash "$directory"
 chown -R root:root "$directory"
+chmod -R a+rX "$directory"
 chmod -R go-w "$directory"
 
 if [[ -L /srv/ultralove-shopify/current ]]; then
@@ -65,6 +67,15 @@ systemctl daemon-reload
 systemctl enable ultralove-shopify
 systemctl restart ultralove-shopify
 systemctl is-active ultralove-shopify
+ready=false
+for attempt in {1..30}; do
+    if curl --fail --silent http://127.0.0.1:3097/ | grep -q 'UltraLove Dropshipping Lab'; then
+        ready=true
+        break
+    fi
+    sleep 1
+done
+[[ "$ready" == true ]] || { echo "App readiness check failed" >&2; exit 1; }
 
 if [[ ! -e /etc/nginx/sites-available/shopify-lab ]]; then
     install -m 644 "$directory/ops/shopify-lab.nginx.conf" /etc/nginx/sites-available/shopify-lab
