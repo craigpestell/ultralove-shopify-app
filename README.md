@@ -38,8 +38,8 @@ drafts contain public product metadata, not embedded authentication parameters, 
 are rejected when their saved-pricing baseline no longer matches the server.
 Existing `/app/imports` bookmarks redirect to `/app` with their job and embedded
 authentication query context retained; legacy preview/queue/retry forms remain
-supported. The task-oriented redesign is deployed to the integration lab as
-release `779c6ff`, superseding the earlier unified-page design.
+supported. The task-oriented redesign, with uncapped product selections, is
+deployed to the integration lab as release `6228e98`.
 
 The feed-selection catalog rows show the first supplier product image as a
 48-pixel thumbnail. Hover, focus with the keyboard, or tap/click the thumbnail
@@ -464,6 +464,26 @@ No imports were queued or running. No store data was modified by the deployment.
 The protected SQLite backup is `20261009T220126355823Z.sqlite`; the previous
 release and rollback symlink point to `107030b`.
 
+### Uncapped product selections deployment, 2026-10-09
+
+Release `6228e98` removes the total selected-parent and import count limits.
+Catalog pagination and supplier requests remain bounded to 50 products per page
+or batch; selections and per-product markup overrides can span those batches.
+Incomplete batches or inconsistent feed checkpoints fail before preview
+persistence. No migration or supplier/WordPress deployment was required.
+
+All 52 tests, TypeScript, ESLint, and app/worker builds passed locally and during
+lab provisioning. Offline browser verification covered 55 selected products,
+saved individual markup, and a complete preview. Automated tests completed a
+125-parent import and validated 1,250 selections and overrides. No live imports
+were created for verification.
+
+HTTPS returned 200, and the app, import worker, and Nginx were active. Deployment
+preserved all 21 jobs, seven saved products, the 25% default markup, the 40%
+override for product 17537, and empty inventory enrollment. No jobs were queued
+or running. The protected SQLite backup is `20261009T221733675607Z.sqlite`;
+the previous release and rollback symlink point to `779c6ff`.
+
 ## Existing Shopify app
 
 Verified in the Dev Dashboard on 2026-10-09:
@@ -560,7 +580,7 @@ and approval.
 
 ## Current host and rollback
 
-The deployed release is `779c6ff` on the isolated integration-lab
+The deployed release is `6228e98` on the isolated integration-lab
 droplet. Node 24.21.0 runs as `ultralove-shopify` on `127.0.0.1:3097`,
 proxied by its separate HTTPS Nginx vhost. Source is under
 `/srv/ultralove-shopify/releases`; `current` selects the release.
