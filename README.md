@@ -23,8 +23,9 @@ The table's **Select all on this page** checkbox selects or deselects only the
 visible page, preserving choices on other pages. It shows a partial state when
 some rows are selected. If the full page would exceed the 50-parent total, the
 control is disabled with an explanation; clear choices or select rows individually.
-Bulk selection changes the working selection only; **Save selection (no import)**
-is still required to persist it.
+Bulk selection changes the working selection only; **Save selection and review
+pricing** persists it and opens the pricing/import page. Validation failures stay
+on the catalog page without changing the saved selection or navigating.
 
 The feed-selection catalog rows show the first supplier product image as a
 48-pixel thumbnail. Hover, focus with the keyboard, or tap/click the thumbnail
@@ -49,8 +50,11 @@ are authorized for the existing lab installation.
 
 ## Pricing and product-import jobs
 
-From the catalog, save 1-50 parent selections and open **Review pricing and product
-imports**. Set an initial markup between 0 and 1000 percent, with at most two
+From the catalog, select 1-50 parents and choose **Save selection and review
+pricing** to save and open **Pricing and product imports**. This does not create
+a preview or queue an import. The separate **Review pricing and product imports**
+link revisits that page using previously saved selections.
+Set an initial markup between 0 and 1000 percent, with at most two
 decimal places, then choose **Preview import**. The preview uses the
 existing supplier payload builder, including published variants, barcodes,
 approved public media and explicit stock/data-review warnings. Retail prices

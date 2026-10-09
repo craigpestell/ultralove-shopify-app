@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { data, Form, Link, useActionData, useLoaderData, useNavigation, useRouteError } from "react-router";
+import { data, Form, Link, redirect, useActionData, useLoaderData, useNavigation, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticateLabAdmin } from "../shopify.server";
 import db from "../db.server";
@@ -40,7 +40,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (form.get("intent") !== "save-selection" || form.getAll("ids").length !== 1 ||
       typeof form.get("ids") !== "string" || String(form.get("ids")).length > 1000) {
     console.warn("Rejected an invalid catalog selection form.");
-    return data({ error: "Invalid catalog selection form.", message: null }, { status: 400 });
+    return data({ error: "Invalid catalog selection form." }, { status: 400 });
   }
   let ids: number[];
   try {
@@ -48,21 +48,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   } catch (error) {
     if (!(error instanceof Error)) throw error;
     console.warn("Rejected invalid selected product IDs.");
-    return data({ error: "Select at most 50 distinct supplier product IDs.", message: null }, { status: 400 });
+    return data({ error: "Select at most 50 distinct supplier product IDs." }, { status: 400 });
   }
   try {
     await validateSelection(ids);
   } catch (error) {
     if (!(error instanceof CatalogError)) throw error;
     console.error("Catalog selection validation failed.", error.message);
-    return data({ error: error.message, message: null }, { status: 502 });
+    return data({ error: error.message }, { status: 502 });
   }
   await db.catalogSelection.upsert({
     where: { shop: session.shop },
     create: { shop: session.shop, productIds: JSON.stringify(ids) },
     update: { productIds: JSON.stringify(ids) },
   });
-  return { error: null, message: `Saved ${ids.length} selected products. No import has run.` };
+  return redirect("/app/imports");
 };
 
 function stockLabel(product: { type: string; manage_stock: boolean; stock_quantity: number | null; stock_owner_id: number | null; id: number }) {
@@ -100,7 +100,6 @@ export default function Index() {
         <div className="catalog-browser">
           {error && <p role="alert">{error} <Link to="/app">Retry catalog</Link></p>}
           {result?.error && <p role="alert">{result.error}</p>}
-          {result?.message && <p role="status">{result.message}</p>}
           <Form method="get" className="catalog-filters">
             <label>Search name or SKU <input name="search" defaultValue={filters.search || ""} maxLength={100} /></label>
             <label>Category
@@ -117,7 +116,7 @@ export default function Index() {
           <Form method="post">
             <input type="hidden" name="intent" value="save-selection" />
             <input type="hidden" name="ids" value={JSON.stringify(ids)} />
-            <p>{ids.length} of 50 selected. Save before leaving this screen to retain your selection.</p>
+            <p>{ids.length} of 50 selected. Save your selection to continue to pricing. No import runs until you confirm and queue it.</p>
             {pageExceedsLimit && <p id="page-selection-limit" role="status">Selecting all products on this page would exceed the 50-product limit. Clear some selections first or select products individually.</p>}
             <div className="catalog-table">
               <table>
@@ -148,7 +147,7 @@ export default function Index() {
             </div>
             {products && !products.products.length && <p>No products match these filters.</p>}
             <p>Selected IDs: {ids.length ? ids.join(", ") : "None"}</p>
-            <button type="submit" disabled={busy || Boolean(error)}>Save selection (no import)</button>
+            <button type="submit" disabled={busy || Boolean(error)}>Save selection and review pricing</button>
             {" "}<button type="button" disabled={busy || !ids.length} onClick={() => setIds([])}>Clear selection</button>
           </Form>
           <p><Link to={`?${params}`}>First product page</Link>{products?.has_more && <> | <Link to={`?${next}`}>Next 50 products</Link></>}</p>
