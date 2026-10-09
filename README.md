@@ -6,15 +6,15 @@ license remains in [LICENSE.md](LICENSE.md).
 
 ## Status
 
-The embedded development foundation is deployed; the next catalog-browser
-increment is implemented locally but is not deployed or connected yet.
+The embedded catalog browser and saved selections are deployed and connected
+to the real development feed.
 The interface accepts only
 `ultralove-integration-lab.myshopify.com`. Shopify authentication and signed
 webhook verification use the official SDK. Lab-store checks additionally apply
 to login, authenticated routes and webhook handlers. The template's product
 creation demo has been removed.
 
-The local browser increment adds name/SKU search, category navigation, bounded
+The browser provides name/SKU search, category navigation, bounded
 50-parent pages and per-store saved selections capped at 50 parents. Saving
 does not import, publish, sync inventory or approve forwarding. It validates
 published selections against the real feed before committing app-owned SQLite
@@ -47,17 +47,30 @@ Prisma generation, schema validation and migrations must pass with that override
 
 ### Verification recorded, 2026-10-09
 
-- Ten offline authentication/catalog policy tests passed; type-check, lint and
+- Eleven offline authentication/catalog policy tests passed; type-check, lint and
   production build passed.
 - Prisma generation, schema validation and SQLite migrations passed.
 - `npm audit` reported zero vulnerabilities, including development dependencies.
 - The production build served its landing page over local HTTP with dummy
   credentials. Foreign-store app/login requests returned 403, duplicate shop
   parameters returned 400, and an invalid-signature webhook returned 401.
-- Live Shopify session authentication and embedded rendering passed for the
-  deployed foundation. The app-owned database contains one authenticated lab
-  session. Hosted feed access, live selection persistence and imports remain
-  unverified for the local browser increment.
+- Live Shopify session authentication, embedded rendering and hosted feed access
+  passed on release `05f1160`.
+- The live browser displayed 50 parents, advanced to another page and returned
+  one product for SKU `1513`. Category `518` combined with that SKU also returned
+  one product. Category labels decode entities as text, including
+  `Lotions, Creams & Dusts`; the exact accessible label is `Category`.
+- Saving selections persisted across reloads. Exactly 50 parents could be saved;
+  all product checkboxes on the next page were disabled at the limit, and a
+  forged 51-parent submission produced a visible rejection.
+- Clear selection reset the unsaved selection to `[]`. Existing saved selections
+  were preserved during final checks. No import was invoked by this interface.
+- Deployed foreign-shop requests returned 403, invalid-signature webhooks returned
+  401, and responses carried `Cache-Control: no-store`. App, Nginx and lab PHP-FPM
+  were active; the app listener remained loopback-only.
+- The original dev worker still synced SKUs `1513`, `2455` and `70072`, preserving
+  retailer prices. These checks do not establish independent-store onboarding or
+  real-order fulfilment.
 
 ## Existing Shopify app
 
@@ -83,14 +96,14 @@ Copy `.env.example` to an untracked `.env` and provision the existing app's key,
 secret and approved HTTPS URL securely. Do not use a manager's feed password,
 commit credentials, print `shopify app env show`, or expose them to the browser.
 
-## Hosting and activation gate
+## Hosting and reprovisioning checks
 
-Recommended first host: the existing isolated DigitalOcean integration-lab
-droplet, under a separate non-root service and app directory, not inside
-WordPress. No new hosting purchase is needed for that choice; its current
-capacity still needs checking. This app can move to another Node/container host.
+The existing isolated DigitalOcean integration-lab droplet hosts the app under
+a separate non-root service and app directory, not inside WordPress. Capacity
+was checked before deployment; no new hosting purchase was needed.
+This app can move to another Node/container host.
 
-Before switching the installed app to this interface:
+When reprovisioning or moving the installed app:
 
 1. Confirm host capacity, persistent session storage, backups and an isolated
    service account. Keep session data and app credentials outside the webroot;
@@ -105,8 +118,8 @@ Before switching the installed app to this interface:
    its redirect URLs, signed webhooks and iframe headers. Session-token/OAuth
    authentication for the UI is distinct from the existing worker's
    client-credentials grant; worker success does not prove UI authentication.
-4. Arrange a dedicated server-side catalog credential and approved HTTPS feed
-   access from this host. Do not expose feed credentials or bypass dev's Access
+4. Arrange a dedicated server-side catalog credential and approved restricted
+   transport from this host. Do not expose feed credentials or bypass dev's Access
    policy. Do not copy the root-only importer behind a public HTTP endpoint.
 5. Test login from Shopify and rejection of other shops. Preserve the existing
    worker and verify it after publishing a reviewed app version with the new
@@ -117,9 +130,9 @@ the existing dev worker also completed a product-only sync with its original
 selection and preserved retailer prices. The installed version and scopes above
 are the reviewed foundation configuration.
 
-## Pending catalog connection
+## Live catalog connection
 
-The browser is designed to use a separate SSH key with a forced PHP command,
+The browser uses a separate SSH key with a forced PHP command,
 restricted to the app host's public IP. It permits only catalog reads through
 the existing authenticated loopback HTTP feed. Normal authentication and feed
 bookkeeping may write to the database, as approved on 2026-10-09; the connection
@@ -127,9 +140,13 @@ does not create/change supplier products or forward orders.
 It does not provide shell, forwarding or administrator
 access, and does not change Cloudflare Access or either firewall.
 
-The intended dev account is the existing catalog-only customer with a separate,
+The dev account is the existing catalog-only customer with a separate,
 revocable application password. Neither private key nor password belongs in git.
-The proxy credentials and key have **not** been provisioned yet.
+The proxy credentials, source restriction and pinned host key are provisioned.
+The verified dev SSH target is `138.68.43.251`, hostname
+`ultralove-dev-managed`; do not use the historical `138.197.211.58` address.
+The app runs as a separate service user and connects as `ultralove-catalog-proxy`.
+The forced command accepts only `catalog-read`; an attempted `id` was rejected.
 Provisioning sources are in `ops/provision-app-catalog.sh`,
 `ops/provision-catalog-proxy.sh`, `ops/setup-catalog-proxy.php` and
 `ops/catalog-proxy.php`.
@@ -139,13 +156,13 @@ read mode used by the earlier standalone import verifier. The existing guard
 is unchanged. No WordPress runtime code deployment is needed for this adapter.
 
 The initial app source has not been pushed; the private GitHub repository is
-still empty pending explicit push approval. The catalog increment
-are local only. Production rollout and independent retailer onboarding require
+still empty pending explicit push approval. The catalog increment is committed
+locally and deployed from git archives. Production rollout and independent retailer onboarding require
 separate work and approval.
 
-## Foundation host and rollback
+## Current host and rollback
 
-The deployed foundation release is `a271a77` on the isolated integration-lab
+The deployed catalog release is `05f1160` on the isolated integration-lab
 droplet. Node 24.21.0 runs as `ultralove-shopify` on `127.0.0.1:3097`,
 proxied by its separate HTTPS Nginx vhost. Source is under
 `/srv/ultralove-shopify/releases`; `current` selects the release.
@@ -157,5 +174,6 @@ The pre-update Shopify version `ultralove-dropshipping-lab-2` remains available
 for rollback: restore it in the Dev Dashboard to return to the old supplier-lab
 URL and non-embedded mode. Do not uninstall/recreate the app or rotate its secret.
 The preceding local hosting release `a419640` failed due to file read permissions
-and is **not** a usable code rollback; retain `a271a77` until a newer interface
-has passed live verification.
+and is **not** a usable code rollback. The verified foundation `a271a77` remains
+an earlier code rollback, but does not provide catalog browsing. Code rollback
+does not undo persistent session or selection migrations.
