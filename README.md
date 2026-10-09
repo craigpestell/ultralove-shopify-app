@@ -88,6 +88,11 @@ Checks include offline lab-policy tests, TypeScript, ESLint and the production
 build. These do not establish live Shopify authentication or feed connectivity.
 For a configured local session and selection database, run `npm run setup`.
 
+Prisma and `@prisma/client` stay on the supported 6.19 line (minimum 6.19.3).
+The official Shopify Prisma session adapter currently requires Prisma 6; a
+Prisma 7 migration must wait for compatible session storage rather than bypassing
+npm peer validation.
+
 Unused GraphQL demo/code-generation dependencies are omitted. Prisma's config
 dependency uses a scoped `deepmerge-ts` 8 override for its recursion advisory;
 Prisma generation, schema validation and migrations must pass with that override.
