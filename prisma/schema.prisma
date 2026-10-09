@@ -46,6 +46,8 @@ model ImportJob {
   status     String       @default("PREVIEW")
   selection  String
   markup     String
+  active     Boolean      @default(false)
+  publicationId String?
   locationId String
   generation String
   cursor     Int

@@ -4,7 +4,7 @@ import db from "./db.server";
 import { selectionIds } from "./catalog-policy";
 import { importPlan, validateSelection } from "./catalog.server";
 import { assertLabShop } from "./lab-policy.server";
-import { ImportError, MAX_PREVIEW_AGE, importDraft, markupPercent, matchProduct, payload, plannedFeed, priceRange, remoteCatalog, reviewLabels, shopContext } from "./import-engine";
+import { ImportError, MAX_PREVIEW_AGE, importConfirmation, importDraft, importSettings, markupPercent, matchProduct, onlineStorePublication, payload, plannedFeed, priceRange, remoteCatalog, reviewLabels, shopContext } from "./import-engine";
 import type { GraphQL } from "./import-engine";
 
 export async function savedSelection(shop: string) {
@@ -13,12 +13,16 @@ export async function savedSelection(shop: string) {
   return selectionIds(saved ? JSON.parse(saved.productIds) : []);
 }
 
-export async function createPreview(shop: string, markup: string, api: GraphQL) {
+export async function createPreview(shop: string, markup: string, api: GraphQL, choices = { active: false, publish: false }) {
   assertLabShop(shop);
+  if (typeof choices.active !== "boolean" || typeof choices.publish !== "boolean" || (choices.publish && !choices.active)) {
+    throw new ImportError("Publishing requires a valid Active import setting.");
+  }
   const ids = await savedSelection(shop);
   if (!ids.length) throw new ImportError("Save between 1 and 50 selected parent products before reviewing pricing.");
   const normalized = markupPercent(markup);
   const location = await shopContext(api, shop);
+  const settings = importSettings(choices.active, choices.publish ? await onlineStorePublication(api) : null);
   const run = randomBytes(16).toString("hex");
   const plan = plannedFeed(await importPlan(ids, location, run, normalized), ids, run, location);
   const products = await remoteCatalog(api);
@@ -27,6 +31,7 @@ export async function createPreview(shop: string, markup: string, api: GraphQL) 
     data: {
       id: run, shop, selection: JSON.stringify(ids), markup: normalized, locationId: location,
       generation: plan.generation, cursor: plan.cursor,
+      ...settings,
       items: { create: plan.items.map((item) => ({
         supplierId: item.supplierId, name: item.name, sku: item.sku,
         wholesale: JSON.stringify(item.wholesale), payload: JSON.stringify(item.payload),
@@ -36,10 +41,13 @@ export async function createPreview(shop: string, markup: string, api: GraphQL) 
   });
 }
 
-export async function queueJob(shop: string, id: string, retry: boolean) {
+export async function queueJob(shop: string, id: string, retry: boolean, confirmation = "draft-only") {
   assertLabShop(shop);
   const job = await db.importJob.findFirst({ where: { id, shop } });
   if (!job || job.status !== (retry ? "FAILED" : "PREVIEW")) throw new ImportError("This job cannot be queued in its current state.");
+  if (confirmation !== importConfirmation(importSettings(job.active, job.publicationId))) {
+    throw new ImportError("Confirm the saved import visibility settings before queueing.");
+  }
   if (!retry && Date.now() - job.createdAt.getTime() > MAX_PREVIEW_AGE) throw new ImportError("Pricing preview expired. Create a fresh preview.");
   if (!retry && JSON.stringify(await savedSelection(shop)) !== job.selection) throw new ImportError("Saved selections changed. Create a fresh pricing preview.");
   try {
@@ -65,6 +73,8 @@ export async function importScreen(shop: string, id: string | null) {
   if (id && !current) throw new Response("Import job not found.", { status: 404 });
   const job = current && {
     id: current.id, status: current.status, markup: current.markup, createdAt: current.createdAt.toISOString(),
+    ...importSettings(current.active, current.publicationId),
+    confirmation: importConfirmation(importSettings(current.active, current.publicationId)),
     error: current.error, generation: current.generation, cursor: current.cursor,
     items: current.items.map((item) => {
       const input = payload(JSON.parse(item.payload), item.supplierId, current.id, current.locationId);
@@ -89,9 +99,13 @@ export async function runJob(id: string, shop: string, api: GraphQL, stopping: (
   if (claimed.count !== 1) return;
   const job = await db.importJob.findUniqueOrThrow({ where: { id }, include: { items: { orderBy: { supplierId: "asc" } } } });
   try {
+    const settings = importSettings(job.active, job.publicationId);
     const ids = selectionIds(JSON.parse(job.selection));
     if (!ids.length || ids.length !== job.items.length) throw new ImportError("Invalid immutable job selection.");
     if (await shopContext(api, shop) !== job.locationId) throw new ImportError("Approved inventory location changed. No new drafts were created.");
+    if (settings.publicationId && await onlineStorePublication(api) !== settings.publicationId) {
+      throw new ImportError("The Online Store publication changed since preview. Create a fresh preview; no new product was created or published.");
+    }
     await validateSelection(ids);
     const products = await remoteCatalog(api);
     for (const item of job.items) {
@@ -104,9 +118,20 @@ export async function runJob(id: string, shop: string, api: GraphQL, stopping: (
         const claim = await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId: item.supplierId } } });
         const result = await importDraft({
           api, products, input, supplierId: item.supplierId, runId: id,
+          ...settings,
           attempted: Boolean(claim?.mutationStartedAt), previouslyMapped: Boolean(claim?.productId || item.productId),
           expectedProductId: claim?.productId || item.productId,
           fresh: Date.now() - job.createdAt.getTime() <= MAX_PREVIEW_AGE,
+          onCreated: async (productId) => {
+            await db.$transaction([
+              db.importClaim.upsert({
+                where: { shop_supplierId: { shop, supplierId: item.supplierId } },
+                create: { shop, supplierId: item.supplierId, runId: id, productId },
+                update: { productId },
+              }),
+              db.importItem.update({ where: { jobId_supplierId: { jobId: id, supplierId: item.supplierId } }, data: { productId } }),
+            ]);
+          },
           beforeMutation: async () => {
             await db.importClaim.upsert({
               where: { shop_supplierId: { shop, supplierId: item.supplierId } },

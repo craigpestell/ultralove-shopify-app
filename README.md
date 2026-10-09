@@ -26,24 +26,50 @@ control is disabled with an explanation; clear choices or select rows individual
 Bulk selection changes the working selection only; **Save selection (no import)**
 is still required to persist it.
 
+The feed-selection catalog rows show the first supplier product image as a
+48-pixel thumbnail. Hover, focus with the keyboard, or tap/click the thumbnail
+to open a larger preview. The preview appears above the table's scroll container
+and stays within the app viewport; Escape, clicking outside, scrolling or resizing
+closes it. Missing or failed images display an explicit placeholder. The images
+come from the existing feed, without fetching or changing Shopify products.
+Image previews do not select products or submit forms.
+
 The deployed pricing/import increment adds immutable CAD previews and background
 draft-import jobs; ongoing inventory synchronization remains a subsequent step.
 The existing
 feed and root-only PHP workers remain in `craigpestell/ultralove`; this web
 process must never run those workers as root or read their credential files.
-No orders, payments, emails, shipments or storefront publication are enabled.
+No order forwarding, payment processing, emails or shipments are enabled by the
+app. The local import-visibility increment adds opt-in Active status and Online
+Store publication for newly imported products; deployment and additional Shopify
+scope authorization are required before these controls can be used live.
 
-## Pricing and draft-import jobs
+## Pricing and product-import jobs
 
-From the catalog, save 1-50 parent selections and open **Review pricing and draft
+From the catalog, save 1-50 parent selections and open **Review pricing and product
 imports**. Set an initial markup between 0 and 1000 percent, with at most two
-decimal places, then choose **Preview draft import**. The preview uses the
+decimal places, then choose **Preview import**. The preview uses the
 existing supplier payload builder, including published variants, barcodes,
 approved public media and explicit stock/data-review warnings. Retail prices
 are supplier prices multiplied by `(1 + markup / 100)`, rounded to two decimals.
 No FX conversion, shipping, tax or fee adjustment is applied.
 
-Confirm the displayed snapshot and choose **Queue draft import** within ten
+The **Set new products to Active** and **Publish new products to Online Store**
+switches both default off. Publishing requires Active status; turning Active
+off also clears publishing. The three modes are:
+
+- Both off: create unpublished drafts, preserving the existing default.
+- Active only: activate new products without requesting any channel publication.
+- Active and publish: activate new products and publish to the Online Store only.
+  Other sales channels are not targeted.
+
+The visibility settings and exact Online Store publication ID are saved with
+the immutable pricing preview. Changing the switches does not alter an existing
+job; create a new preview to change its settings. Review stock/data warnings
+before confirming. Activation and publication apply only to products created by
+that job, never to reused listings from prior imports.
+
+Confirm the displayed snapshot and choose **Queue import** within ten
 minutes. The server verifies that saved selections still match the preview.
 Only one job per store can be queued/running. A separate non-root systemd worker
 processes it; public HTTP handlers never execute a root importer.
@@ -51,18 +77,27 @@ Status refreshes automatically and shows per-product results and Shopify links.
 Existing owned and recognized legacy listings are reused without any mutation,
 including their retailer-edited prices, content, inventory and publication state.
 
-New copies are unpublished drafts at the verified merchant **Shop location** in
+New copies initially become unpublished drafts at the verified merchant **Shop location** in
 the CAD lab store. Unsafe/unknown/shared stock stays zero with review warnings,
 as in the existing payload policy. New source variants, SKU, price, barcode,
-inventory policy and stock are verified before a created result is recorded.
-Media can still be processing; review images before any later publication.
+inventory policy and stock are verified before activation or publication.
+Draft-only and Active-only jobs can finish while images are processing. Publishing
+requires all expected product images to be READY; missing, processing or failed
+images leave that item failed for explicit review and retry, without publishing.
+The worker confirms Active status and Online Store publication before recording
+success. A later failure may leave an already-created product Active but not
+published; the per-item error explains the remaining action. Its Shopify product
+link is recorded before activation/publication, so failed items can be reviewed.
 Importing does not start ongoing sync or approve order forwarding.
 
 The persistent database stores the immutable feed generation/cursor, selection,
-markup, payloads, per-product results and cross-job creation claims. Before the
+markup, visibility settings, payloads, per-product results and cross-job creation claims. Before the
 only create mutation, the worker records a claim and disables API transport
 retries. **Retry / reconcile failed items** skips completed items and reads
-Shopify to recover a matching owned draft. An unresolved uncertain creation or
+Shopify to recover a matching owned draft or Active product. An interrupted
+activation is reconciled without recreating the product. Publication is checked
+before retrying, so already-published products are not published again.
+An unresolved uncertain creation or
 removed mapped listing blocks another creation and requires operator review.
 The worker resumes interrupted jobs after restart. Do not run the standalone
 operator catalog importer concurrently with these jobs.
@@ -72,6 +107,31 @@ before migrations, builds the worker, and installs `ultralove-shopify-imports`.
 The existing Shopify Supplier plugin is still needed for feed-client and payload
 planning code. The proxy's `import-plan` operation only reads/plans; all Shopify
 mutations run in the separate app worker.
+
+### Enabling publication on an existing installation
+
+Publication discovery and publishing require `read_publications` and
+`write_publications`, in addition to the existing product/inventory scopes.
+The example environment, app configuration and fresh-host provisioning include
+both. Existing protected app environment files are deliberately not overwritten
+by provisioning: append both scopes to the existing `SCOPES` value without
+removing current permissions. Update the installed Shopify app's configured
+scopes, obtain merchant authorization, reopen the embedded app, then restart the
+app/worker with the updated environment. Never print or commit the environment.
+Missing permissions produce an explicit preview/worker error, not a draft-shaped
+success fallback. Publication lookup must find exactly one Online Store catalog;
+it never guesses another channel if the Online Store is missing or ambiguous.
+
+Run the additive `20261009190000_import_visibility` migration before starting
+the updated app/worker. Existing preview and historical jobs migrate to
+draft-only settings (`active=false`, no publication ID). Code rollback cannot
+undo activation or publication already performed in Shopify.
+
+Local verification covers all three modes, migrated draft-only jobs, immutable
+mode confirmation, saved product links, image readiness and interrupted
+publication recovery. Browser checks cover default-off switches, publishing's
+Active dependency and submitted form values. No real product was activated or
+published during these checks.
 
 ## Local validation
 

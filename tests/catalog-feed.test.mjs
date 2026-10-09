@@ -40,6 +40,15 @@ test("category browsing remains bounded and retains real supplier IDs", async ()
   await assert.rejects(categoriesPage(0, async () => ({categories: Array(51).fill({id: 1, name: "Category"}), next_after_id: 51, has_more: false})));
 });
 
+test("catalog browsing retains the ordered supplier images for row previews", async () => {
+  const images = [
+    { src: "https://example.com/front.jpg", alt: "Front view" },
+    { src: "https://example.com/back.jpg", alt: "Back view" },
+  ];
+  const result = await productsPage({}, async () => page([{ ...product, images }]));
+  assert.deepEqual(result.products[0].images, images);
+});
+
 test("selection must be fully confirmed before saving; empty selection needs no feed request", async () => {
   await validateSelection([], async () => { throw new Error("Unexpected request"); });
   await validateSelection([1, 2], async () => ({ids: [2, 1]}));

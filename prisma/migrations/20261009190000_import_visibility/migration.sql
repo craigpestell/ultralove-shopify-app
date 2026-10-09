@@ -1,0 +1,2 @@
+ALTER TABLE "ImportJob" ADD COLUMN "active" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "ImportJob" ADD COLUMN "publicationId" TEXT;

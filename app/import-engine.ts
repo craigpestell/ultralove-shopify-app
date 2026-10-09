@@ -17,7 +17,33 @@ export type RemoteProduct = {
   supplierId: { value: string } | null; variants: { nodes: { sku: string; price: string }[] };
 };
 export const MAX_PREVIEW_AGE = 10 * 60 * 1000;
+export type ImportSettings = { active: boolean; publicationId: string | null };
 const LEGACY: Record<number, string> = { 17186: "1513", 17188: "2455", 17192: "70072", 17194: "70081" };
+
+export function importChoices(form: FormData) {
+  const checked = (name: string) => {
+    const values = form.getAll(name);
+    if (values.length > 1 || (values.length === 1 && values[0] !== "yes")) {
+      throw new ImportError(`Invalid ${name} import setting.`);
+    }
+    return values.length === 1;
+  };
+  const active = checked("active");
+  const publish = checked("publish");
+  if (publish && !active) throw new ImportError("Publishing requires Active product status.");
+  return { active, publish };
+}
+
+export function importSettings(active: unknown, publicationId: unknown): ImportSettings {
+  if (typeof active !== "boolean" || !(publicationId === null ||
+      (typeof publicationId === "string" && /^gid:\/\/shopify\/Publication\/[1-9]\d*$/.test(publicationId))) ||
+      (!active && publicationId !== null)) throw new ImportError("Invalid saved import visibility settings.");
+  return { active, publicationId };
+}
+
+export function importConfirmation(settings: ImportSettings) {
+  return settings.publicationId ? "publish-online-store" : settings.active ? "active-only" : "draft-only";
+}
 
 export function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -144,10 +170,94 @@ export const VERIFY_QUERY = `query VerifyDraft($id:ID!,$after:String,$location:I
   } }
 }`;
 
+export const PUBLICATIONS_QUERY = `query ImportOnlineStorePublication {
+  currentAppInstallation { accessScopes { handle } }
+  publications(first:100,catalogType:APP) {
+    nodes { id catalog { title } }
+    pageInfo { hasNextPage }
+  }
+}`;
+export const ACTIVATE_MUTATION = `mutation ActivateImportedProduct($product:ProductUpdateInput!) {
+  productUpdate(product:$product) { product { id status } userErrors { field message } }
+}`;
+export const PUBLICATION_STATE_QUERY = `query ImportPublicationState($id:ID!,$publicationId:ID!) {
+  product(id:$id) {
+    id status publishedOnPublication(publicationId:$publicationId)
+    media(first:250) { nodes { status } pageInfo { hasNextPage } }
+  }
+}`;
+export const PUBLISH_MUTATION = `mutation PublishImportedProduct($id:ID!,$input:[PublicationInput!]!) {
+  publishablePublish(id:$id,input:$input) { userErrors { field message } }
+}`;
+
 async function request(api: GraphQL, query: string, variables: Record<string, unknown> = {}) {
   const response = object(await api(query, variables));
   if (response.errors !== undefined && list(response.errors).length) throw new ImportError("Shopify rejected the request. Retry after checking API access or rate limits.");
   return object(response.data);
+}
+export async function onlineStorePublication(api: GraphQL): Promise<string> {
+  const response = object(await api(PUBLICATIONS_QUERY, {}));
+  if (response.errors !== undefined && list(response.errors).length) {
+    throw new ImportError("Online Store publication lookup failed. Check read_publications/write_publications permissions and API limits; reopen the app after authorizing the new scopes.");
+  }
+  const data = object(response.data);
+  const scopes = list(object(data.currentAppInstallation).accessScopes).map((scope) => text(object(scope).handle));
+  if (!scopes.includes("write_publications")) {
+    throw new ImportError("Publishing requires read_publications and write_publications. Authorize both scopes and reopen the app before retrying.");
+  }
+  const publications = object(data.publications);
+  if (object(publications.pageInfo).hasNextPage !== false) throw new ImportError("Sales channel pagination requires operator review.");
+  const matches = list(publications.nodes).map(object).filter((publication) =>
+    publication.catalog !== null && object(publication.catalog).title === "Online Store");
+  if (matches.length !== 1) throw new ImportError("Exactly one Online Store publication is required. No other channel will be used.");
+  const id = text(matches[0].id);
+  importSettings(true, id);
+  return id;
+}
+
+async function finishNewProduct(api: GraphQL, input: Payload, product: RemoteProduct, settings: ImportSettings) {
+  if (!settings.active) return;
+  if (product.status !== "DRAFT" && product.status !== "ACTIVE") {
+    throw new ImportError("Imported product status changed unexpectedly. Manual review is required.");
+  }
+  const publicationId = settings.publicationId;
+  let published = false;
+  if (publicationId) {
+    const state = object((await request(api, PUBLICATION_STATE_QUERY, { id: product.id, publicationId })).product);
+    if (state.id !== product.id || state.status !== product.status || typeof state.publishedOnPublication !== "boolean") {
+      throw new ImportError("Imported product publication state changed unexpectedly. Manual review is required.");
+    }
+    published = state.publishedOnPublication;
+    if (!published) {
+      const media = object(state.media);
+      const expectedImages = input.files === undefined ? 0 : list(input.files).length;
+      const images = list(media.nodes).map(object);
+      if (object(media.pageInfo).hasNextPage !== false || images.length !== expectedImages ||
+          images.some((image) => image.status !== "READY")) {
+        throw new ImportError("Product images are missing, processing or failed. Review images in Shopify, then retry; the product was not published.");
+      }
+    }
+  }
+  if (product.status === "DRAFT") {
+    const result = object((await request(api, ACTIVATE_MUTATION, { product: { id: product.id, status: "ACTIVE" } })).productUpdate);
+    const errors = list(result.userErrors);
+    if (errors.length) throw new ImportError(`Product activation requires review: ${errors.map((entry) => text(object(entry).message)).join("; ")}`);
+    const active = object(result.product);
+    if (active.id !== product.id || active.status !== "ACTIVE") throw new ImportError("Shopify did not confirm Active product status.");
+  }
+  if (publicationId) {
+    if (!published) {
+      const result = object((await request(api, PUBLISH_MUTATION, {
+        id: product.id, input: [{ publicationId }],
+      })).publishablePublish);
+      const errors = list(result.userErrors);
+      if (errors.length) throw new ImportError(`Online Store publication requires review: ${errors.map((entry) => text(object(entry).message)).join("; ")}`);
+    }
+    const state = object((await request(api, PUBLICATION_STATE_QUERY, { id: product.id, publicationId })).product);
+    if (state.id !== product.id || state.status !== "ACTIVE" || state.publishedOnPublication !== true) {
+      throw new ImportError("Shopify did not confirm Active status and Online Store publication. Retry reconciliation; no duplicate will be created.");
+    }
+  }
 }
 export async function shopContext(api: GraphQL, shop: string) {
   const data = await request(api, CONTEXT_QUERY);
@@ -207,7 +317,7 @@ export function matchProduct(products: RemoteProduct[], supplierId: number): Rem
   }
   return found;
 }
-export async function verifyDraft(api: GraphQL, input: Payload, productId: string) {
+export async function verifyDraft(api: GraphQL, input: Payload, productId: string, expectedStatus: "DRAFT" | "ACTIVE" = "DRAFT") {
   const wanted = new Map(input.variants.map((variant) => {
     const supplier = variant.metafields.find((field) => field.namespace === "ultralove_catalog" && field.key === "supplier_id");
     if (!supplier || !/^[1-9]\d*$/.test(supplier.value)) throw new ImportError("Missing supplier variant identity.");
@@ -220,7 +330,7 @@ export async function verifyDraft(api: GraphQL, input: Payload, productId: strin
   let complete = false;
   for (let pageNumber = 0; pageNumber < 21; pageNumber++) {
     const product = object((await request(api, VERIFY_QUERY, { id: productId, after, location: input.variants[0].inventoryQuantities[0].locationId })).product);
-    if (product.status !== "DRAFT") throw new ImportError("The created product is not an unpublished draft; manual review required.");
+    if (product.status !== expectedStatus) throw new ImportError("The imported product has an unexpected status; manual review required.");
     const variants = object(product.variants);
     for (const entry of list(variants.nodes)) {
       const variant = object(entry);
@@ -251,13 +361,18 @@ export async function verifyDraft(api: GraphQL, input: Payload, productId: strin
 export async function importDraft(options: {
   api: GraphQL; products: RemoteProduct[]; input: Payload; supplierId: number; runId: string;
   attempted: boolean; previouslyMapped: boolean; expectedProductId?: string | null; fresh: boolean; beforeMutation: () => Promise<void>;
+  active?: boolean; publicationId?: string | null;
+  onCreated?: (productId: string) => Promise<void>;
 }): Promise<{ status: "CREATED" | "REUSED"; productId: string }> {
   const { api, products, input, supplierId, runId } = options;
+  const settings = importSettings(options.active ?? false, options.publicationId ?? null);
   const existing = matchProduct(products, supplierId);
   if (existing) {
     if (options.expectedProductId && existing.id !== options.expectedProductId) throw new ImportError("The saved Shopify mapping was replaced. Manual review is required.");
     if (existing.tags.includes(`ultralove-catalog-run-${runId}`)) {
-      await verifyDraft(api, input, existing.id);
+      await options.onCreated?.(existing.id);
+      await verifyDraft(api, input, existing.id, settings.active && existing.status === "ACTIVE" ? "ACTIVE" : "DRAFT");
+      await finishNewProduct(api, input, existing, settings);
       return { status: "CREATED", productId: existing.id };
     }
     if (LEGACY[supplierId] && (input.variants.length !== 1 || input.variants[0].sku !== LEGACY[supplierId])) throw new ImportError("Legacy source SKU changed; review required.");
@@ -275,7 +390,9 @@ export async function importDraft(options: {
   if (matchProduct([created], supplierId)?.id !== created.id || !created.tags.includes(`ultralove-catalog-run-${runId}`) || created.status !== "DRAFT") {
     throw new ImportError("Shopify creation returned an unexpected identity or publication status.");
   }
+  await options.onCreated?.(created.id);
   await verifyDraft(api, input, created.id);
-  products.push(created);
+  await finishNewProduct(api, input, created, settings);
+  products.push({ ...created, status: settings.active ? "ACTIVE" : "DRAFT" });
   return { status: "CREATED", productId: created.id };
 }

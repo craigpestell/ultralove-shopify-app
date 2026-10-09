@@ -10,7 +10,7 @@ process.on("SIGINT", () => { stopping = true; });
 
 assertLabShop(LAB_SHOP);
 await db.importJob.updateMany({ where: { shop: LAB_SHOP, status: "RUNNING" }, data: { status: "QUEUED" } });
-console.info("Lab-only draft import worker ready.");
+console.info("Lab-only product import worker ready.");
 while (!stopping) {
   const job = await db.importJob.findFirst({ where: { shop: LAB_SHOP, status: "QUEUED" }, orderBy: { createdAt: "asc" } });
   if (job) {

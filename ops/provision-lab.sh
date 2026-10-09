@@ -36,7 +36,7 @@ values = {
     "SHOPIFY_API_KEY": (base / "shopify-client-id").read_text().strip(),
     "SHOPIFY_API_SECRET": (base / "shopify-client-secret").read_text().strip(),
     "SHOPIFY_APP_URL": "https://shopify-lab.104-248-211-144.sslip.io",
-    "SCOPES": "write_products,write_inventory,read_locations,write_orders,write_merchant_managed_fulfillment_orders,write_fulfillments",
+    "SCOPES": "write_products,write_inventory,read_locations,read_publications,write_publications,write_orders,write_merchant_managed_fulfillment_orders,write_fulfillments",
     "DATABASE_URL": "file:/var/lib/ultralove-shopify/sessions.sqlite",
     "HOST": "127.0.0.1",
     "PORT": "3097",

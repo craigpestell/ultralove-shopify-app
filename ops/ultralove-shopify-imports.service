@@ -1,5 +1,5 @@
 [Unit]
-Description=UltraLove Shopify lab draft-import worker
+Description=UltraLove Shopify lab product-import worker
 After=network.target ultralove-shopify.service
 
 [Service]

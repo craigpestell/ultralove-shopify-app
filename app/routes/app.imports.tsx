@@ -4,9 +4,10 @@ import { data, Form, Link, redirect, useActionData, useLoaderData, useNavigation
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticateLabAdmin } from "../shopify.server";
 import { CatalogError } from "../catalog.server";
-import { ImportError, markupPercent } from "../import-engine";
+import { ImportError, importChoices, markupPercent } from "../import-engine";
 import { createPreview, importScreen, queueJob } from "../imports.server";
 import { supplierText } from "../catalog-policy";
+import ImportOptions from "../import-options";
 import "../catalog.css";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -33,14 +34,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const job = await createPreview(session.shop, markupPercent(field("markup")), async (query, variables) => {
         const response = await admin.graphql(query, { variables, tries: 1 });
         return response.json();
-      });
+      }, importChoices(form));
       return redirect(`/app/imports?job=${job.id}`);
     }
     if (intent !== "queue" && intent !== "retry") throw new ImportError("Invalid import action.");
     const id = field("job");
     if (!/^[a-f0-9]{32}$/.test(id)) throw new ImportError("Invalid import job identifier.");
-    if (field("confirm") !== "draft-only") throw new ImportError("Confirm draft-only importing before queueing.");
-    await queueJob(session.shop, id, intent === "retry");
+    await queueJob(session.shop, id, intent === "retry", field("confirm"));
     return redirect(`/app/imports?job=${id}`);
   } catch (error) {
     if (!(error instanceof ImportError) && !(error instanceof CatalogError)) throw error;
@@ -62,25 +62,29 @@ export default function Imports() {
     return () => clearInterval(timer);
   }, [active, revalidator]);
 
-  return <s-page heading="Pricing and draft imports">
+  return <s-page heading="Pricing and product imports">
     <s-section heading="Review saved selections">
       <div className="catalog-browser">
         <p><Link to="/app">Back to supplier catalog</Link></p>
         <p>Saved supplier IDs: {selected.length ? selected.join(", ") : "None"}. Save catalog selections before creating a preview.</p>
-        <p>CAD only. Markup applies to newly created drafts, not existing retailer listings. This does not publish, start ongoing inventory sync or enable order forwarding.</p>
+        <p>CAD only. Markup and visibility settings apply only to newly imported products, not existing retailer listings.
+          Imports do not start ongoing inventory sync or enable order forwarding.</p>
         {result?.error && <p role="alert">{result.error}</p>}
         <Form method="post" className="catalog-filters">
           <input type="hidden" name="intent" value="preview" />
           <label>Initial retail markup (%) <input name="markup" type="number" min="0" max="1000" step="0.01" defaultValue={job?.markup || "0"} key={job?.id || "new"} required /></label>
-          <button type="submit" disabled={busy || !selected.length}>Preview draft import</button>
+          <ImportOptions key={job?.id || "new"} active={job?.active} publish={Boolean(job?.publicationId)} />
+          <button type="submit" disabled={busy || !selected.length}>Preview import</button>
         </Form>
         <p>Retail price = supplier price x (1 + markup / 100), rounded to two decimal places. Shipping, taxes and fees are not added. Previews expire after 10 minutes.</p>
         {job && <>
           <h2>Job {job.id}</h2>
           <p role="status">Status: {job.status}. {job.items.filter((item) => item.status === "CREATED" || item.status === "REUSED").length} of {job.items.length} products completed. Initial markup: {job.markup}%.</p>
+          <p>Saved visibility: <strong>{job.publicationId ? "Active and published to Online Store" : job.active ? "Active; no publication requested" : "Unpublished drafts"}</strong>.
+            These settings apply only to new products and are fixed for this job. Create a new preview to change them.</p>
           {job.error && <p role="alert">{job.error}</p>}
           <div className="catalog-table"><table>
-            <caption>Immutable pricing snapshot. Existing listings will be reused unchanged. Images may still be processing after draft creation.</caption>
+            <caption>Immutable pricing snapshot. Existing listings will be reused unchanged. Publishing waits for ready product images; processing or failed images require review and retry.</caption>
             <thead><tr><th scope="col">Supplier product</th><th scope="col">Wholesale</th><th scope="col">New draft retail price</th><th scope="col">Result / review</th></tr></thead>
             <tbody>{job.items.map((item) => <tr key={item.supplierId}>
               <td>{supplierText(item.name)}<small>#{item.supplierId} - {item.sku || "Review variant SKUs"} - {item.variantCount} variant(s)</small></td>
@@ -95,8 +99,10 @@ export default function Imports() {
           {(job.status === "PREVIEW" || job.status === "FAILED") && <Form method="post">
             <input type="hidden" name="intent" value={job.status === "FAILED" ? "retry" : "queue"} />
             <input type="hidden" name="job" value={job.id} />
-            <label><span><input name="confirm" type="checkbox" value="draft-only" required /> I confirm these selected products and prices. Create unpublished drafts only; preserve existing listings.</span></label>
-            <button type="submit" disabled={busy}>{job.status === "FAILED" ? "Retry / reconcile failed items" : "Queue draft import"}</button>
+            <label><span><input name="confirm" type="checkbox" value={job.confirmation} required /> I confirm these selected products and prices.
+              {job.publicationId ? " Set new products to Active and publish them to the Online Store." : job.active ? " Set new products to Active without requesting publication." : " Create unpublished drafts only."}
+              {" "}Preserve existing listings.</span></label>
+            <button type="submit" disabled={busy}>{job.status === "FAILED" ? "Retry / reconcile failed items" : "Queue import"}</button>
           </Form>}
           {job.status === "FAILED" && <p>Retries only revisit unfinished items. An uncertain Shopify creation is reconciled before any further action; unresolved uncertainty requires manual review, never another blind creation.</p>}
           {active && <p>Background worker is processing this job. Status refreshes automatically.</p>}

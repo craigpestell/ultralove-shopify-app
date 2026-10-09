@@ -6,6 +6,7 @@ import { authenticateLabAdmin } from "../shopify.server";
 import db from "../db.server";
 import { browseFilters, pageSelection, selectionIds, supplierText } from "../catalog-policy";
 import { categoriesPage, CatalogError, productsPage, validateSelection } from "../catalog.server";
+import ProductImage from "../product-image";
 import "../catalog.css";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -95,7 +96,7 @@ export default function Index() {
       <s-section heading="Browse and select">
         <s-paragraph>Test store: {shop}. Select up to 50 parent products; published variants are included when importing later.</s-paragraph>
         <s-paragraph>Saving a selection does not import, publish or sync products, and does not approve order forwarding.</s-paragraph>
-        <p><Link to="/app/imports">Review pricing and draft imports</Link></p>
+        <p><Link to="/app/imports">Review pricing and product imports</Link></p>
         <div className="catalog-browser">
           {error && <p role="alert">{error} <Link to="/app">Retry catalog</Link></p>}
           {result?.error && <p role="alert">{result.error}</p>}
@@ -130,12 +131,13 @@ export default function Index() {
                       const checked = event.target.checked;
                       setIds((current) => pageSelection(current, pageIds, checked));
                     }} /> Select all on this page</label>
-                </th><th scope="col">Product</th><th scope="col">SKU</th><th scope="col">Supplier price</th><th scope="col">Availability</th></tr></thead>
+                </th><th scope="col">Image</th><th scope="col">Product</th><th scope="col">SKU</th><th scope="col">Supplier price</th><th scope="col">Availability</th></tr></thead>
                 <tbody>{products?.products.map((product) => (
                   <tr key={product.id}>
                     <td><input type="checkbox" aria-label={`Select supplier product ${product.id}`} checked={ids.includes(product.id)}
                       disabled={!ids.includes(product.id) && ids.length >= 50}
                       onChange={(event) => setIds((current) => event.target.checked ? [...current, product.id] : current.filter((id) => id !== product.id))} /></td>
+                    <td><ProductImage image={product.images[0]} name={product.name} /></td>
                     <td>{supplierText(product.name)} <small>#{product.id} - {product.type}</small></td>
                     <td>{product.sku || "Missing SKU - review required"}</td>
                     <td>{product.price === null || product.price === "" ? "Missing price - review required" : `${product.price} CAD`}</td>
