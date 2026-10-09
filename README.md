@@ -44,7 +44,8 @@ image URLs are left unchanged.
 Image previews do not select products or submit forms.
 
 The deployed pricing/import increment adds immutable CAD previews and background
-draft-import jobs; ongoing inventory synchronization remains a subsequent step.
+draft-import jobs. Opt-in inventory synchronization is implemented and tested
+locally; it has not yet been deployed or enabled in the lab.
 The existing
 feed and root-only PHP workers remain in `craigpestell/ultralove`; this web
 process must never run those workers as root or read their credential files.
@@ -101,8 +102,11 @@ processes it; public HTTP handlers never execute a root importer.
 Status refreshes automatically and shows per-product results and Shopify links.
 Failed jobs can be retried/reconciled on the same page using their original
 snapshot, not the current working settings.
-Existing owned and recognized legacy listings are reused without any mutation,
+Existing canonical app-owned listings are reused without any mutation,
 including their retailer-edited prices, content, inventory and publication state.
+The importer no longer reuses or requires the old `ultralove-dev-*` test fixtures.
+Existing claims pointing to those fixtures still require the operator cutover
+described below; they are not silently reassigned.
 
 New copies initially become unpublished drafts at the verified merchant **Shop location** in
 the CAD lab store. Unsafe/unknown/shared stock stays zero with review warnings,
@@ -115,7 +119,8 @@ The worker confirms Active status and Online Store publication before recording
 success. A later failure may leave an already-created product Active but not
 published; the per-item error explains the remaining action. Its Shopify product
 link is recorded before activation/publication, so failed items can be reviewed.
-Importing does not start ongoing sync or approve order forwarding.
+Importing does not automatically enroll products in ongoing sync or approve
+order forwarding.
 
 The persistent database stores the immutable feed generation/cursor, selection,
 markup, visibility settings, payloads, per-product results and cross-job creation claims. Before the
@@ -134,6 +139,63 @@ before migrations, builds the worker, and installs `ultralove-shopify-imports`.
 The existing Shopify Supplier plugin is still needed for feed-client and payload
 planning code. The proxy's `import-plan` operation only reads/plans; all Shopify
 mutations run in the separate app worker.
+
+## Opt-in inventory synchronization
+
+Open **Manage inventory sync** from the catalog page (`/app/inventory`).
+Only products with a completed app import and a persisted creation claim appear.
+Confirm inventory-only synchronization separately for each product, then choose
+**Enable inventory sync**. Enrollment validates the canonical product identity,
+supplier variant metadata, tracked inventory and the approved **Shop location**.
+The source variant, Shopify variant and inventory-item mappings persist in SQLite.
+Legacy test fixtures cannot enroll.
+
+The existing singleton non-root import worker also processes inventory cycles.
+Imports take priority; enabled products target a five-minute interval, not a
+guaranteed service level. **Sync now** schedules a cycle; **Pause sync** prevents
+new corrections after the worker rechecks enrollment. A request already sent
+to Shopify can finish. Changing catalog selections does not pause enrollment.
+The page refreshes while products are enabled and displays last success, next
+due time, mapped variant count and explicit errors/review warnings.
+
+Corrections set **on-hand** supplier stock using compare-and-set, preserving
+Shopify committed order reservations rather than resetting available stock.
+Unknown, unmanaged, shared, out-of-stock, missing or withdrawn supplier stock
+becomes zero. Missing mapped variants are not deleted, and new supplier variants
+require separate review/import. Stock below committed orders produces a review
+warning. Prices, descriptions, product status/publication and orders are untouched.
+This is not dropshipping enrollment or an order-forwarding implementation.
+
+Each cycle validates/advances the supplier journal and reads a current bounded
+stock snapshot. Expired cursors/generation changes require a verified resnapshot.
+Checkpoints advance only after all corrections and final Shopify verification.
+Each mutation has at most 250 quantities; products have at most 2048 variants.
+Pending input, idempotency key and timestamp are saved before sending. A lost
+response or restart retries the identical correction; a confirmed rejection
+allows a fresh compare-and-set next cycle. Uncertain requests older than Shopify's
+24-hour idempotency window pause for explicit stock review and re-enrollment.
+Supplier rate-limit responses delay scheduling by at least their `Retry-After`.
+Other failures remain visible and retry on the next scheduled cycle.
+
+### Deployment and legacy lab cutover
+
+Local tests do not deploy or enable this feature. Deploy the supplier feed client
+with its new `inventory_state()` method to **development only**, then install the
+updated restricted catalog proxy. Its existing pinned SSH connection and feed
+authentication remain required; do not bypass Cloudflare Access.
+Apply the additive `20261009200000_inventory_sync` migration before starting
+the updated app/worker. No new Shopify scopes are required.
+All imports remain unenrolled until explicitly enabled.
+
+Before replacing old test products, back up the development connector settings,
+its cron file and the app SQLite database. Disable the old supplier connector
+and `/etc/cron.d/ultralove-shopify-dev`, and wait for its exclusive worker lock
+to be released. Remove only proven old `ultralove-dev-*` lab fixtures and their
+matching app claims/results, then create fresh canonical app imports. Do not
+delete canonical app-owned mappings or run both connectors against a product.
+The old cron/settings/Shopify fixtures have **not** been retired by local tests.
+The supplier plugin remains needed for feed-client and payload code; this is
+not authorization to enable production synchronization or forward orders.
 
 ### Enabling publication on an existing installation
 

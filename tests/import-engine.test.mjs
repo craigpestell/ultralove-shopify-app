@@ -72,20 +72,22 @@ test("CAD and exact merchant location must be confirmed", async () => {
   await assert.rejects(shopContext(async () => context, "foreign.myshopify.com"));
   await assert.rejects(shopContext(async () => ({ data: { ...context.data, shop: { ...context.data.shop, currencyCode: "USD" } } }), "lab.myshopify.com"));
 });
-test("owned and legacy listings are reused without any mutations or changed prices", async () => {
+test("only canonical owned listings are reused without mutations; old test listings are ignored", async () => {
   const existing = { ...product, tags: ["ultralove-catalog-import", `ultralove-catalog-run-${"b".repeat(32)}`], status: "ACTIVE" };
   const baseline = structuredClone(existing);
   const result = await importDraft({ ...base, products: [existing], api: async () => { throw new Error("No request allowed for reused products"); } });
   assert.deepEqual(result, { status: "REUSED", productId: product.id });
   assert.deepEqual(existing, baseline);
   const legacy = { ...product, handle: "ultralove-dev-1513", tags: ["ultralove-dev-supplier"], supplierId: null, variants: { nodes: [{ sku: "1513", price: "99.00" }] } };
-  assert.equal(matchProduct([legacy], 17186).id, product.id);
+  assert.equal(matchProduct([legacy], 17186), null);
+  assert.equal(matchProduct([], 17186), null, "old fixture IDs no longer require legacy listings");
+  const canonical = { ...product, handle: "ultralove-catalog-17186", supplierId: { value: "17186" } };
+  assert.equal(matchProduct([legacy, canonical], 17186).id, product.id);
 });
 test("unowned collisions and duplicate identities fail before mutation", async () => {
   assert.throws(() => matchProduct([{ ...product, tags: [] }], 100));
   assert.throws(() => matchProduct([product, { ...product, id: "gid://shopify/Product/2" }], 100));
   await assert.rejects(importDraft({ ...base, products: [{ ...product, tags: [] }], api: async () => { throw new Error("Must not mutate"); } }));
-  assert.throws(() => matchProduct([], 17186), /legacy supplier/);
   await assert.rejects(importDraft({ ...base, expectedProductId: "gid://shopify/Product/2", products: [product],
     api: async () => { throw new Error("Must not mutate replaced mappings"); } }), /mapping was replaced/);
 });

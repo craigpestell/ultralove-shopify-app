@@ -8,13 +8,13 @@ try {
         throw new RuntimeException( 'Catalog request exceeds its limit.' );
     }
     $request = json_decode( $input, true, 512, JSON_THROW_ON_ERROR );
-    if ( ! is_array( $request ) || array_diff( array_keys( $request ), array( 'operation', 'filters', 'ids', 'location', 'run', 'markup' ) ) ) {
+    if ( ! is_array( $request ) || array_diff( array_keys( $request ), array( 'operation', 'filters', 'ids', 'location', 'run', 'markup', 'checkpoint' ) ) ) {
         throw new RuntimeException( 'Invalid catalog operation.' );
     }
     require '/var/www/html/wp-content/plugins/ultralove-shopify-supplier/includes/class-feed-client.php';
     $credentials = json_decode( file_get_contents( '/var/lib/ultralove-catalog-proxy/feed-client.json' ), true, 512, JSON_THROW_ON_ERROR );
     $transport = static function ( string $url, array $arguments ): array {
-        if ( ! preg_match( '~^http://localhost/wp-json/ultralove-feed/v1/(products|categories)\?~', $url ) ) {
+        if ( ! preg_match( '~^http://localhost/wp-json/ultralove-feed/v1/(products|categories|inventory|changes)\?~', $url ) ) {
             throw new RuntimeException( 'Unsupported supplier endpoint.' );
         }
         $headers = array();
@@ -57,6 +57,17 @@ try {
             $result = array( 'ids' => array_values( array_filter( array_keys( $result['products'] ),
                 static fn( $id ) => $result['products'][$id]['parent_id'] === 0 ) ) );
             break;
+        case 'inventory-sync':
+            if ( ! method_exists( $client, 'inventory_state' ) ) {
+                throw new RuntimeException( 'Supplier inventory synchronization is not provisioned.' );
+            }
+            if ( ! is_array( $request['ids'] ?? null ) || count( $request['ids'] ) !== 1
+                || ! is_int( $request['ids'][0] ?? null )
+                || ( isset( $request['checkpoint'] ) && ! is_array( $request['checkpoint'] ) ) ) {
+                throw new InvalidArgumentException( 'Invalid inventory synchronization request.' );
+            }
+            $result = $client->inventory_state( $request['ids'][0], $request['checkpoint'] ?? null );
+            break;
         case 'import-plan':
             if ( ! is_string( $request['location'] ?? null ) || ! is_string( $request['run'] ?? null )
                 || ! is_numeric( $request['markup'] ?? null ) ) {
@@ -84,6 +95,10 @@ try {
     }
     echo json_encode( $result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES ) . "\n";
 } catch ( RuntimeException | InvalidArgumentException | JsonException $error ) {
+    if ( $error->getCode() === 429 && preg_match( '/; retry after ([0-9]+) seconds/', $error->getMessage(), $matches )
+        && (int) $matches[1] > 0 && (int) $matches[1] <= 2147483647 ) {
+        echo json_encode( array( 'error' => array( 'status' => 429, 'retryAfter' => (int) $matches[1] ) ), JSON_THROW_ON_ERROR ) . "\n";
+    }
     fwrite( STDERR, 'Catalog proxy failed: ' . $error->getMessage() . "\n" );
     exit( 1 );
 }

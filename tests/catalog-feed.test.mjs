@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { productsPage, categoriesPage, validateSelection } from "../app/catalog.server.ts";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+import { PassThrough } from "node:stream";
+import { CatalogError, inventoryState, productsPage, categoriesPage, validateSelection } from "../app/catalog.server.ts";
 
 const product = {
   id: 1, parent_id: 0, name: "Supplier product", sku: "SKU-1", type: "simple",
@@ -69,5 +72,42 @@ test("selection must be fully confirmed before saving; empty selection needs no 
   await validateSelection([1, 2], async () => ({ids: [2, 1]}));
   for (const ids of [[1], [1, 1], [1, "2"], [1, 2, 3]]) {
     await assert.rejects(validateSelection([1, 2], async () => ({ids})));
+  }
+});
+
+test("restricted inventory transport accepts only bounded structured rate-limit failures", async (context) => {
+  const previousHost = process.env.CATALOG_SSH_HOST;
+  process.env.CATALOG_SSH_HOST = "127.0.0.1";
+  let output;
+  context.mock.method(childProcess, "execFile", (file, args, options, callback) => {
+    assert.equal(file, "/usr/bin/ssh");
+    assert.ok(args.includes("StrictHostKeyChecking=yes"));
+    assert.equal(options.timeout, 150000);
+    queueMicrotask(() => callback(Object.assign(new Error("SSH failed"), { code: 1 }), output));
+    return { stdin: new PassThrough() };
+  });
+  syncBuiltinESMExports();
+  try {
+    for (const [body, delay] of [
+      ['{"error":{"status":429,"retryAfter":3600}}', 3600],
+      ['{"error":{"status":429,"retryAfter":0}}', null],
+      ['{"error":{"status":429,"retryAfter":-1}}', null],
+      ['{"error":{"status":429,"retryAfter":1.5}}', null],
+      ['{"error":{"status":429,"retryAfter":2147483648}}', null],
+      ['{"error":{"status":429,"retryAfter":"3600"}}', null],
+      ['{"error":{"status":500,"retryAfter":3600}}', null],
+      ["not JSON", null],
+      ["", null],
+    ]) {
+      output = body;
+      await assert.rejects(inventoryState(100, null), (error) =>
+        error instanceof CatalogError && error.retryAfter === delay &&
+        (delay === null ? /unavailable/.test(error.message) : /3600 seconds/.test(error.message)));
+    }
+  } finally {
+    context.mock.restoreAll();
+    syncBuiltinESMExports();
+    if (previousHost === undefined) delete process.env.CATALOG_SSH_HOST;
+    else process.env.CATALOG_SSH_HOST = previousHost;
   }
 });

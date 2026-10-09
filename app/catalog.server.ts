@@ -1,6 +1,12 @@
 import { execFile } from "node:child_process";
 
-export class CatalogError extends Error {}
+export class CatalogError extends Error {
+  readonly retryAfter: number | null;
+  constructor(message: string, retryAfter: number | null = null) {
+    super(message);
+    this.retryAfter = retryAfter;
+  }
+}
 
 type Transport = (request: object) => Promise<unknown>;
 export type CatalogProduct = {
@@ -40,7 +46,21 @@ const sshTransport: Transport = (request) => new Promise((resolve, reject) => {
   ], { timeout: 150000, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => {
     if (error) {
       console.error("Restricted supplier catalog transport failed.", error.code);
-      reject(new CatalogError("Supplier catalog is unavailable. Retry shortly; no selection or import was changed."));
+      if (stdout.trim()) {
+        try {
+          const response: unknown = JSON.parse(stdout);
+          if (object(response) && object(response.error) && response.error.status === 429 &&
+              typeof response.error.retryAfter === "number" && Number.isSafeInteger(response.error.retryAfter) &&
+              response.error.retryAfter > 0 && response.error.retryAfter <= 2147483647) {
+            reject(new CatalogError(`Supplier rate limit: retry after ${response.error.retryAfter} seconds.`, response.error.retryAfter));
+            return;
+          }
+        } catch (parseError) {
+          if (!(parseError instanceof SyntaxError)) throw parseError;
+          console.warn("Supplier failure response was not valid JSON.");
+        }
+      }
+      reject(new CatalogError("Supplier connection is unavailable. Retry shortly; no new supplier data was accepted."));
       return;
     }
     try {
@@ -113,4 +133,8 @@ export async function validateSelection(ids: number[], transport: Transport = ss
 
 export async function importPlan(ids: number[], location: string, run: string, markup: string, transport: Transport = sshTransport): Promise<unknown> {
   return transport({ operation: "import-plan", ids, location, run, markup });
+}
+
+export async function inventoryState(id: number, checkpoint: { generation: string; cursor: number } | null, transport: Transport = sshTransport): Promise<unknown> {
+  return transport({ operation: "inventory-sync", ids: [id], checkpoint });
 }

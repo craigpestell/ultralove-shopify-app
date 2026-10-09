@@ -87,3 +87,27 @@ model ImportClaim {
 
   @@id([shop, supplierId])
 }
+
+model InventorySync {
+  shop          String
+  supplierId    Int
+  productId     String
+  locationId    String
+  mappings      String
+  enabled       Boolean  @default(false)
+  revision      Int      @default(0)
+  status        String   @default("PAUSED")
+  error         String?
+  generation    String?
+  cursor        Int?
+  pending       String?
+  pendingKey    String?
+  pendingAt     DateTime?
+  nextRunAt     DateTime @default(now())
+  lastSuccessAt DateTime?
+  updatedAt     DateTime @updatedAt
+
+  @@id([shop, supplierId])
+  @@unique([shop, productId])
+  @@index([shop, enabled, nextRunAt])
+}

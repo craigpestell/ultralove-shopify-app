@@ -164,6 +164,7 @@ export default function Index() {
       <s-paragraph>Test store: {shop}. Select up to 50 parent products. Each parent’s markup applies to all its published variants.</s-paragraph>
       <s-paragraph>All prices are CAD. Saving and previewing do not import, publish, sync inventory or approve order forwarding.</s-paragraph>
       <div className="catalog-browser">
+        <p><Link to="/app/inventory">Manage inventory sync</Link></p>
         {blocker.state === "blocked" && <s-banner heading="Unsaved selection or markup" tone="warning">
           Stay to save your changes, or leave without saving.
           <s-button onClick={() => blocker.reset()}>Stay on this page</s-button>

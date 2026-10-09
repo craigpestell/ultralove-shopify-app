@@ -20,7 +20,6 @@ export type RemoteProduct = {
 };
 export const MAX_PREVIEW_AGE = 10 * 60 * 1000;
 export type ImportSettings = { active: boolean; publicationId: string | null };
-const LEGACY: Record<number, string> = { 17186: "1513", 17188: "2455", 17192: "70072", 17194: "70081" };
 
 export function importChoices(form: FormData) {
   const checked = (name: string) => {
@@ -314,17 +313,9 @@ export function matchProduct(products: RemoteProduct[], supplierId: number): Rem
       }
       matches.set(product.id, product);
     }
-    if (LEGACY[supplierId] && product.tags.includes("ultralove-dev-supplier") && product.variants.nodes[0]?.sku === LEGACY[supplierId]) {
-      if (product.handle !== `ultralove-dev-${LEGACY[supplierId]}`) throw new ImportError("Legacy supplier identity collision.");
-      matches.set(product.id, product);
-    }
   }
   if (matches.size > 1) throw new ImportError(`Duplicate Shopify supplier identities for ${supplierId}.`);
-  const found = [...matches.values()][0] || null;
-  if (LEGACY[supplierId] && (!found || found.variants.nodes.length !== 1 || found.variants.nodes[0].sku !== LEGACY[supplierId])) {
-    throw new ImportError("Required single-variant legacy supplier listing is missing or changed.");
-  }
-  return found;
+  return [...matches.values()][0] || null;
 }
 export async function verifyDraft(api: GraphQL, input: Payload, productId: string, expectedStatus: "DRAFT" | "ACTIVE" = "DRAFT") {
   const wanted = new Map(input.variants.map((variant) => {
@@ -384,7 +375,6 @@ export async function importDraft(options: {
       await finishNewProduct(api, input, existing, settings);
       return { status: "CREATED", productId: existing.id };
     }
-    if (LEGACY[supplierId] && (input.variants.length !== 1 || input.variants[0].sku !== LEGACY[supplierId])) throw new ImportError("Legacy source SKU changed; review required.");
     return { status: "REUSED", productId: existing.id };
   }
   if (options.attempted) throw new ImportError("A previous creation may have reached Shopify. Reconciliation found no owned listing; manual review is required before another creation.");
