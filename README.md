@@ -32,6 +32,9 @@ to open a larger preview. The preview appears above the table's scroll container
 and stays within the app viewport; Escape, clicking outside, scrolling or resizing
 closes it. Missing or failed images display an explicit placeholder. The images
 come from the existing feed, without fetching or changing Shopify products.
+Protected development upload URLs are mapped to the matching public UltraLove
+upload URLs, as in the existing import payload builder. Cloudinary and other
+image URLs are left unchanged.
 Image previews do not select products or submit forms.
 
 The deployed pricing/import increment adds immutable CAD previews and background

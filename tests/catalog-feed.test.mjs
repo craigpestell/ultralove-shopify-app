@@ -49,6 +49,21 @@ test("catalog browsing retains the ordered supplier images for row previews", as
   assert.deepEqual(result.products[0].images, images);
 });
 
+test("protected dev upload images use the public originals without rewriting other hosts or paths", async () => {
+  const sources = [
+    "https://dev.ultralove.ca/wp-content/uploads/1513.jpg",
+    "https://res.cloudinary.com/supplier/image/upload/product.jpg",
+    "https://ultralove.ca/wp-content/uploads/product.jpg",
+    "https://dev.ultralove.ca/not-an-upload.jpg",
+    "https://example.com/?url=https://dev.ultralove.ca/wp-content/uploads/product.jpg",
+  ];
+  const result = await productsPage({}, async () => page([{ ...product, images: sources.map((src) => ({ src, alt: "Product image" })) }]));
+  assert.deepEqual(result.products[0].images.map((image) => image.src), [
+    "https://ultralove.ca/wp-content/uploads/1513.jpg", ...sources.slice(1),
+  ]);
+  assert.equal(result.products[0].images[0].alt, "Product image");
+});
+
 test("selection must be fully confirmed before saving; empty selection needs no feed request", async () => {
   await validateSelection([], async () => { throw new Error("Unexpected request"); });
   await validateSelection([1, 2], async () => ({ids: [2, 1]}));

@@ -73,7 +73,10 @@ export async function productsPage(filters: object, transport: Transport = sshTr
       if (!object(image) || typeof image.src !== "string" || typeof image.alt !== "string") {
         throw new CatalogError("Supplier catalog returned invalid media.");
       }
-      return { src: image.src, alt: image.alt };
+      return {
+        src: image.src.replace(/^https:\/\/dev\.ultralove\.ca\/wp-content\/uploads\//, "https://ultralove.ca/wp-content/uploads/"),
+        alt: image.alt,
+      };
     });
     return {
       id: Number(record.id), parent_id: 0, name: record.name, sku: record.sku, type: record.type,
