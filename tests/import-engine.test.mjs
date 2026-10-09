@@ -54,6 +54,16 @@ test("plan requires every selected parent and complete variant pricing", () => {
   assert.throws(() => plannedFeed(feed, [100, 101], run, location));
   assert.throws(() => plannedFeed({ ...feed, items: [...feed.items, ...feed.items] }, [100], run, location));
   assert.throws(() => plannedFeed(feed, Array.from({ length: 51 }, (_, index) => index + 1), run, location));
+  const ids = Array.from({ length: 50 }, (_, index) => index + 1);
+  const fifty = { ...feed, items: ids.map((id) => {
+    const copy = structuredClone(feed.items[0]);
+    copy.supplierId = id;
+    copy.payload.handle = `ultralove-catalog-${id}`;
+    copy.payload.metafields[0].value = String(id);
+    copy.payload.variants[0].metafields[0].value = String(id);
+    return copy;
+  }) };
+  assert.equal(plannedFeed(fifty, ids, run, location).items.length, 50);
 });
 test("CAD and exact merchant location must be confirmed", async () => {
   const context = { data: { shop: { myshopifyDomain: "lab.myshopify.com", currencyCode: "CAD" },
@@ -118,4 +128,17 @@ test("Shopify pagination advances and repeated cursors fail explicitly", async (
   const api = async () => ({ data: { products: { nodes: [product], pageInfo: { hasNextPage: ++calls < 2, endCursor: "cursor" } } } });
   assert.equal((await remoteCatalog(api)).length, 2);
   await assert.rejects(remoteCatalog(async () => ({ data: { products: { nodes: [product], pageInfo: { hasNextPage: true, endCursor: "cursor" } } } })));
+});
+
+test("nullable Shopify SKUs on unrelated listings and review-only drafts remain valid", async () => {
+  const nullable = { ...product, variants: { nodes: [{ sku: null, price: "15.63" }] } };
+  const catalog = await remoteCatalog(async () => ({ data: { products: { nodes: [nullable], pageInfo: { hasNextPage: false } } } }));
+  assert.equal(catalog[0].variants.nodes[0].sku, "");
+  const missingSku = { ...input, variants: [{ ...input.variants[0], sku: "" }] };
+  const checked = { ...verify.data.product, variants: { ...verify.data.product.variants,
+    nodes: [{ ...verify.data.product.variants.nodes[0], sku: null }] } };
+  const result = await importDraft({ ...base, input: missingSku, products: [], api: async (query) => query === CREATE_MUTATION
+    ? { data: { productSet: { product: nullable, userErrors: [] } } }
+    : { data: { product: checked } } });
+  assert.equal(result.status, "CREATED");
 });

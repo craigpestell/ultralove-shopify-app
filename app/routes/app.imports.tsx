@@ -71,7 +71,7 @@ export default function Imports() {
         {result?.error && <p role="alert">{result.error}</p>}
         <Form method="post" className="catalog-filters">
           <input type="hidden" name="intent" value="preview" />
-          <label>Initial retail markup (%) <input name="markup" type="number" min="0" max="1000" step="0.01" defaultValue="0" required /></label>
+          <label>Initial retail markup (%) <input name="markup" type="number" min="0" max="1000" step="0.01" defaultValue={job?.markup || "0"} key={job?.id || "new"} required /></label>
           <button type="submit" disabled={busy || !selected.length}>Preview draft import</button>
         </Form>
         <p>Retail price = supplier price x (1 + markup / 100), rounded to two decimal places. Shipping, taxes and fees are not added. Previews expire after 10 minutes.</p>

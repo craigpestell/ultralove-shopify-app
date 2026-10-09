@@ -166,7 +166,7 @@ function remoteProduct(value: unknown): RemoteProduct {
     supplierId: product.supplierId === null ? null : { value: text(object(product.supplierId).value) },
     variants: { nodes: list(object(product.variants).nodes).map((entry) => {
       const variant = object(entry);
-      return { sku: text(variant.sku), price: text(variant.price) };
+      return { sku: variant.sku === null ? "" : text(variant.sku), price: text(variant.price) };
     }) } };
 }
 export async function remoteCatalog(api: GraphQL): Promise<RemoteProduct[]> {
@@ -224,7 +224,7 @@ export async function verifyDraft(api: GraphQL, input: Payload, productId: strin
       const expected = wanted.get(id);
       const inventory = object(variant.inventoryItem);
       const quantities = list(object(inventory.inventoryLevel).quantities).map(object);
-      if (!expected || seen.has(id) || variant.sku !== expected.sku || cents(text(variant.price)) !== cents(expected.price) ||
+      if (!expected || seen.has(id) || (variant.sku === null ? "" : text(variant.sku)) !== expected.sku || cents(text(variant.price)) !== cents(expected.price) ||
           (variant.barcode || null) !== (expected.barcode || null) || variant.inventoryPolicy !== "DENY" || inventory.tracked !== true ||
           quantities.length !== 1 || quantities[0].name !== "available" || quantities[0].quantity !== expected.inventoryQuantities[0].quantity) {
         throw new ImportError("Created draft failed variant, price, barcode or inventory verification. No repair was applied.");

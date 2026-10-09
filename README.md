@@ -88,7 +88,7 @@ Prisma generation, schema validation and migrations must pass with that override
 
 ### Verification recorded, 2026-10-09
 
-- Twenty-two offline authentication/catalog/import and SQLite queue tests passed; type-check, lint and
+- Twenty-three offline authentication/catalog/import and SQLite queue tests passed; type-check, lint and
   production build passed.
 - Prisma generation, schema validation and SQLite migrations passed.
 - `npm audit` reported zero vulnerabilities, including development dependencies.
