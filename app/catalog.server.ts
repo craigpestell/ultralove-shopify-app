@@ -105,4 +105,9 @@ export async function validateSelection(ids: number[], transport: Transport = ss
       !ids.every((id) => selected.includes(id))) {
     throw new CatalogError("Some selected products are no longer published. Refresh the catalog and revise the selection.");
   }
+
+}
+
+export async function importPlan(ids: number[], location: string, run: string, markup: string, transport: Transport = sshTransport): Promise<unknown> {
+  return transport({ operation: "import-plan", ids, location, run, markup });
 }

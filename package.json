@@ -2,7 +2,7 @@
   "name": "ultralove-shopify-app",
   "private": true,
   "scripts": {
-    "build": "react-router build",
+    "build": "react-router build && node ops/build-worker.mjs",
     "dev": "shopify app dev",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",

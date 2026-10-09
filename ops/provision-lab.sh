@@ -51,21 +51,41 @@ PY
 fi
 
 chown -R ultralove-shopify:ultralove-shopify "$directory"
+if [[ -f /var/lib/ultralove-shopify/sessions.sqlite ]]; then
+    install -d -o root -g root -m 700 /srv/ultralove-shopify/backups
+    python3 - <<'PY'
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+destination = Path("/srv/ultralove-shopify/backups") / (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + ".sqlite")
+with sqlite3.connect("file:/var/lib/ultralove-shopify/sessions.sqlite?mode=ro", uri=True) as source:
+    with sqlite3.connect(destination) as backup:
+        source.backup(backup)
+destination.chmod(0o600)
+print("Protected persistent session/job database backup created.")
+PY
+fi
 runuser -u ultralove-shopify -- env PATH="$PATH" DATABASE_URL=file:/var/lib/ultralove-shopify/sessions.sqlite \
     bash -c 'cd "$1" && npm ci && npm run setup && npm run check' bash "$directory"
 chown -R root:root "$directory"
 chmod -R a+rX "$directory"
 chmod -R go-w "$directory"
+if systemctl is-active --quiet ultralove-shopify-imports; then
+    systemctl stop ultralove-shopify-imports
+fi
 
 if [[ -L /srv/ultralove-shopify/current ]]; then
     ln -sfn "$(readlink /srv/ultralove-shopify/current)" /srv/ultralove-shopify/previous
 fi
 ln -sfn "$directory" /srv/ultralove-shopify/current
 install -m 644 "$directory/ops/ultralove-shopify.service" /etc/systemd/system/ultralove-shopify.service
-systemd-analyze verify /etc/systemd/system/ultralove-shopify.service
+install -m 644 "$directory/ops/ultralove-shopify-imports.service" /etc/systemd/system/ultralove-shopify-imports.service
+systemd-analyze verify /etc/systemd/system/ultralove-shopify.service /etc/systemd/system/ultralove-shopify-imports.service
 systemctl daemon-reload
 systemctl enable ultralove-shopify
 systemctl restart ultralove-shopify
+systemctl enable ultralove-shopify-imports
+systemctl restart ultralove-shopify-imports
 systemctl is-active ultralove-shopify
 ready=false
 for attempt in {1..30}; do
@@ -86,7 +106,7 @@ if [[ ! -e /etc/nginx/sites-available/shopify-lab ]]; then
         --redirect -d shopify-lab.104-248-211-144.sslip.io
 fi
 nginx -t
-systemctl is-active nginx ultralove-shopify
+systemctl is-active nginx ultralove-shopify ultralove-shopify-imports
 curl --fail --silent --show-error https://shopify-lab.104-248-211-144.sslip.io/ |
     grep 'UltraLove Dropshipping Lab' >/dev/null
 echo "Lab app release $release is serving over HTTPS."

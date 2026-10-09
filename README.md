@@ -20,11 +20,52 @@ does not import, publish, sync inventory or approve forwarding. It validates
 published selections against the real feed before committing app-owned SQLite
 state; no WordPress product mappings or settings are changed.
 
-Pricing, draft-import jobs and ongoing inventory synchronization are subsequent
-steps. The existing
+The deployed pricing/import increment adds immutable CAD previews and background
+draft-import jobs; ongoing inventory synchronization remains a subsequent step.
+The existing
 feed and root-only PHP workers remain in `craigpestell/ultralove`; this web
 process must never run those workers as root or read their credential files.
 No orders, payments, emails, shipments or storefront publication are enabled.
+
+## Pricing and draft-import jobs
+
+From the catalog, save 1-50 parent selections and open **Review pricing and draft
+imports**. Set an initial markup between 0 and 1000 percent, with at most two
+decimal places, then choose **Preview draft import**. The preview uses the
+existing supplier payload builder, including published variants, barcodes,
+approved public media and explicit stock/data-review warnings. Retail prices
+are supplier prices multiplied by `(1 + markup / 100)`, rounded to two decimals.
+No FX conversion, shipping, tax or fee adjustment is applied.
+
+Confirm the displayed snapshot and choose **Queue draft import** within ten
+minutes. The server verifies that saved selections still match the preview.
+Only one job per store can be queued/running. A separate non-root systemd worker
+processes it; public HTTP handlers never execute a root importer.
+Status refreshes automatically and shows per-product results and Shopify links.
+Existing owned and recognized legacy listings are reused without any mutation,
+including their retailer-edited prices, content, inventory and publication state.
+
+New copies are unpublished drafts at the verified merchant **Shop location** in
+the CAD lab store. Unsafe/unknown/shared stock stays zero with review warnings,
+as in the existing payload policy. New source variants, SKU, price, barcode,
+inventory policy and stock are verified before a created result is recorded.
+Media can still be processing; review images before any later publication.
+Importing does not start ongoing sync or approve order forwarding.
+
+The persistent database stores the immutable feed generation/cursor, selection,
+markup, payloads, per-product results and cross-job creation claims. Before the
+only create mutation, the worker records a claim and disables API transport
+retries. **Retry / reconcile failed items** skips completed items and reads
+Shopify to recover a matching owned draft. An unresolved uncertain creation or
+removed mapped listing blocks another creation and requires operator review.
+The worker resumes interrupted jobs after restart. Do not run the standalone
+operator catalog importer concurrently with these jobs.
+
+`ops/provision-lab.sh` backs up the persistent database to a root-only directory
+before migrations, builds the worker, and installs `ultralove-shopify-imports`.
+The existing Shopify Supplier plugin is still needed for feed-client and payload
+planning code. The proxy's `import-plan` operation only reads/plans; all Shopify
+mutations run in the separate app worker.
 
 ## Local validation
 
@@ -47,7 +88,7 @@ Prisma generation, schema validation and migrations must pass with that override
 
 ### Verification recorded, 2026-10-09
 
-- Eleven offline authentication/catalog policy tests passed; type-check, lint and
+- Twenty-three offline authentication/catalog/import and SQLite queue tests passed; type-check, lint and
   production build passed.
 - Prisma generation, schema validation and SQLite migrations passed.
 - `npm audit` reported zero vulnerabilities, including development dependencies.
@@ -63,8 +104,20 @@ Prisma generation, schema validation and migrations must pass with that override
 - Saving selections persisted across reloads. Exactly 50 parents could be saved;
   all product checkboxes on the next page were disabled at the limit, and a
   forged 51-parent submission produced a visible rejection.
-- Clear selection reset the unsaved selection to `[]`. Existing saved selections
-  were preserved during final checks. No import was invoked by this interface.
+- Clear selection reset the unsaved selection to `[]`. The original five saved
+  selections were restored after the import checks below.
+- Pricing/import release `13306ab` passed live embedded preview, confirmation,
+  queueing and results checks. A 25% job reused all five existing selections
+  without changing their prices, content, publication state or inventory.
+- Source parent `17539` (SKU `SE1414-50 BX`) created unpublished Shopify draft
+  `8424579366975`: CAD 7.95 wholesale became CAD 9.94 at 25% markup, with stock 2,
+  barcode `716770016270` and one READY media item. Native Shopify admin confirmed
+  Draft status and no publication to any channel.
+- A second job previewed 30% but reused that draft without repricing it or
+  creating a duplicate. An interrupted-job simulation retained its creation
+  claim; worker restart recovered the same draft through read-only reconciliation.
+  Exactly one listing existed for that source, and all three jobs completed.
+  The draft and job history remain intentionally available for staff review.
 - Deployed foreign-shop requests returned 403, invalid-signature webhooks returned
   401, and responses carried `Cache-Control: no-store`. App, Nginx and lab PHP-FPM
   were active; the app listener remained loopback-only.
@@ -157,24 +210,34 @@ is unchanged. No WordPress runtime code deployment is needed for this adapter.
 
 The app source is published in the private GitHub repository. Its `main` branch
 contains the previously deployed foundation; `feat/embedded-catalog` contains
-the catalog and hosting increment for review. The running release was deployed
+the catalog and hosting increment for review. The pricing/import increment is
+on `feat/draft-import-jobs`, based on that review branch. The running release was deployed
 from a git archive, independently of merging that branch. Production rollout
 and independent retailer onboarding require separate work and approval.
 
 ## Current host and rollback
 
-The deployed catalog release is `05f1160` on the isolated integration-lab
+The deployed pricing/import release is `13306ab` on the isolated integration-lab
 droplet. Node 24.21.0 runs as `ultralove-shopify` on `127.0.0.1:3097`,
 proxied by its separate HTTPS Nginx vhost. Source is under
 `/srv/ultralove-shopify/releases`; `current` selects the release.
 Sessions are in `/var/lib/ultralove-shopify/sessions.sqlite` (mode 0600).
 The app environment is root-readable only at `/etc/ultralove-shopify/app.env`.
 Request logging omits query parameters. Existing supplier WordPress is untouched.
+The separate `ultralove-shopify-imports` service runs as the same non-root user,
+with a singleton worker lock. Persistent jobs and creation claims share the
+session database; pre-migration backups are root-only under
+`/srv/ultralove-shopify/backups`.
 
 The pre-update Shopify version `ultralove-dropshipping-lab-2` remains available
 for rollback: restore it in the Dev Dashboard to return to the old supplier-lab
 URL and non-embedded mode. Do not uninstall/recreate the app or rotate its secret.
+Before returning to any pre-jobs code release or the old non-embedded app version,
+run `systemctl disable --now ultralove-shopify-imports` on the lab host so imports
+cannot continue behind an older UI. Keep the database, creation claims, backups
+and additive migrations intact. The verified catalog release `05f1160` is the
+pre-jobs code rollback.
 The preceding local hosting release `a419640` failed due to file read permissions
 and is **not** a usable code rollback. The verified foundation `a271a77` remains
 an earlier code rollback, but does not provide catalog browsing. Code rollback
-does not undo persistent session or selection migrations.
+does not undo persistent session, selection or import migrations.
