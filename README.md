@@ -43,9 +43,9 @@ The existing
 feed and root-only PHP workers remain in `craigpestell/ultralove`; this web
 process must never run those workers as root or read their credential files.
 No order forwarding, payment processing, emails or shipments are enabled by the
-app. The local import-visibility increment adds opt-in Active status and Online
-Store publication for newly imported products; deployment and additional Shopify
-scope authorization are required before these controls can be used live.
+app. The deployed import-visibility increment adds opt-in Active status and Online
+Store publication for newly imported products. The additional publication scopes
+are authorized for the existing lab installation.
 
 ## Pricing and product-import jobs
 
@@ -212,12 +212,35 @@ fit. Filtered-page selection/deselection preserves off-page choices, and an empt
 page disables the control. No save or import was triggered during these checks;
 the original five saved selections remained unchanged.
 
+### Image and import-visibility deployment, 2026-10-09
+
+Release `5b200e9` includes catalog thumbnails/hover previews, opt-in Active and
+Online Store publication settings, public supplier image URLs, and channel
+discovery through AppCatalog app associations rather than generated catalog names.
+All 39 tests, type-check, lint and app/worker builds passed during provisioning;
+the discovery query also passed Shopify 2026-10 schema validation.
+
+Live embedded verification confirmed a 48-pixel thumbnail loads an 800-by-800
+public supplier image and opens a 280-by-280 hover preview within the iframe
+viewport. A fresh Active + Online Store pricing preview succeeded and persisted
+the correct publication ID with explicit mode-specific confirmation. It remained
+unqueued: no product was activated or published during these deployment checks.
+Saved IDs `17186,17188,17535,17537` were preserved; existing completed jobs retained
+draft-only settings. No jobs were queued or running after verification.
+
+The additive visibility migration is applied. App, import worker and Nginx are
+active; HTTPS readiness and Nginx configuration checks passed. The latest protected
+SQLite backup is `20261009T193644513635Z.sqlite`; the runtime environment backup is
+`app-env-20261009T192535003749Z.bak`. The previous code release is `c930575`.
+These changes were committed locally and deployed from exact git archives; no
+GitHub push was performed as part of this deployment.
+
 ## Existing Shopify app
 
 Verified in the Dev Dashboard on 2026-10-09:
 
 - Organization: `239653376`; app: `433204330497`.
-- Active version: `ultralove-lab-embedded-foundation`.
+- Active version: `ultralove-lab-catalog-visibility`.
 - Current URL: `https://shopify-lab.104-248-211-144.sslip.io`.
 - Current embedding setting: `true`.
 - Allowed redirect: `https://shopify-lab.104-248-211-144.sslip.io/auth/callback`.
@@ -267,8 +290,8 @@ When reprovisioning or moving the installed app:
 
 The foundation's hosting, authentication and iframe checks passed on 2026-10-09;
 the existing dev worker also completed a product-only sync with its original
-selection and preserved retailer prices. The installed version and scopes above
-are the reviewed foundation configuration.
+selection and preserved retailer prices. The current installed version preserves
+that foundation configuration and adds merchant-authorized publication scopes.
 
 ## Live catalog connection
 
@@ -306,7 +329,7 @@ and approval.
 
 ## Current host and rollback
 
-The deployed release is `3136d22` on the isolated integration-lab
+The deployed release is `5b200e9` on the isolated integration-lab
 droplet. Node 24.21.0 runs as `ultralove-shopify` on `127.0.0.1:3097`,
 proxied by its separate HTTPS Nginx vhost. Source is under
 `/srv/ultralove-shopify/releases`; `current` selects the release.
