@@ -1,0 +1,17 @@
+.catalog-browser { color: #202223; }
+.catalog-browser label { display: flex; flex-direction: column; gap: 6px; }
+.catalog-filters { display: flex; flex-wrap: wrap; gap: 16px; align-items: end; margin: 16px 0; }
+.catalog-browser input:not([type="checkbox"]), .catalog-browser select, .catalog-browser button {
+  font: inherit; padding: 8px 12px; border: 1px solid #8c9196; border-radius: 6px;
+}
+.catalog-browser button { background: #fff; cursor: pointer; }
+.catalog-browser button:disabled { opacity: .6; cursor: wait; }
+.catalog-browser input[type="checkbox"] { width: 18px; height: 18px; }
+.catalog-browser :focus-visible { outline: 2px solid #005bd3; outline-offset: 2px; }
+.catalog-table { overflow-x: auto; }
+.catalog-table table { width: 100%; border-collapse: collapse; }
+.catalog-table th, .catalog-table td { padding: 12px; border-bottom: 1px solid #e1e3e5; text-align: left; }
+.catalog-table small { display: block; color: #616a75; }
+.catalog-table caption { text-align: left; margin-bottom: 12px; }
+.catalog-browser [role="alert"] { padding: 12px; background: #fff4f4; color: #8e1f0b; }
+.catalog-browser [role="status"] { padding: 12px; background: #e3f1df; }

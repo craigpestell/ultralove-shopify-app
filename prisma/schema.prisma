@@ -32,3 +32,53 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+
+model CatalogSelection {
+  shop       String   @id
+  productIds String   @default("[]")
+  updatedAt  DateTime @updatedAt
+}
+
+model ImportJob {
+  id         String       @id
+  shop       String
+  activeShop String?      @unique
+  status     String       @default("PREVIEW")
+  selection  String
+  markup     String
+  locationId String
+  generation String
+  cursor     Int
+  error      String?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  items      ImportItem[]
+
+  @@index([shop, createdAt])
+}
+
+model ImportItem {
+  jobId      String
+  supplierId Int
+  name       String
+  sku        String
+  wholesale  String
+  payload    String
+  status     String    @default("PENDING")
+  productId  String?
+  error      String?
+  attempts   Int       @default(0)
+  job        ImportJob @relation(fields: [jobId], references: [id])
+
+  @@id([jobId, supplierId])
+}
+
+model ImportClaim {
+  shop              String
+  supplierId        Int
+  runId             String
+  productId         String?
+  mutationStartedAt DateTime?
+
+  @@id([shop, supplierId])
+}
