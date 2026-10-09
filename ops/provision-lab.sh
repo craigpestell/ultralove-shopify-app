@@ -27,7 +27,7 @@ if ! id ultralove-shopify >/dev/null 2>&1; then
     useradd --system --home /var/lib/ultralove-shopify --shell /usr/sbin/nologin ultralove-shopify
 fi
 install -d -o ultralove-shopify -g ultralove-shopify -m 700 /var/lib/ultralove-shopify
-install -d -o root -g root -m 700 /etc/ultralove-shopify
+install -d -o root -g ultralove-shopify -m 750 /etc/ultralove-shopify
 if [[ ! -e /etc/ultralove-shopify/app.env ]]; then
     python3 - <<'PY'
 from pathlib import Path
@@ -69,7 +69,7 @@ systemctl restart ultralove-shopify
 systemctl is-active ultralove-shopify
 ready=false
 for attempt in {1..30}; do
-    if curl --fail --silent http://127.0.0.1:3097/ | grep -q 'UltraLove Dropshipping Lab'; then
+    if curl --fail --silent http://127.0.0.1:3097/ | grep 'UltraLove Dropshipping Lab' >/dev/null; then
         ready=true
         break
     fi
@@ -88,5 +88,5 @@ fi
 nginx -t
 systemctl is-active nginx ultralove-shopify
 curl --fail --silent --show-error https://shopify-lab.104-248-211-144.sslip.io/ |
-    grep -q 'UltraLove Dropshipping Lab'
+    grep 'UltraLove Dropshipping Lab' >/dev/null
 echo "Lab app release $release is serving over HTTPS."
