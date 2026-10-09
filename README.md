@@ -19,6 +19,12 @@ The browser provides name/SKU search, category navigation, bounded
 does not import, publish, sync inventory or approve forwarding. It validates
 published selections against the real feed before committing app-owned SQLite
 state; no WordPress product mappings or settings are changed.
+The table's **Select all on this page** checkbox selects or deselects only the
+visible page, preserving choices on other pages. It shows a partial state when
+some rows are selected. If the full page would exceed the 50-parent total, the
+control is disabled with an explanation; clear choices or select rows individually.
+Bulk selection changes the working selection only; **Save selection (no import)**
+is still required to persist it.
 
 The deployed pricing/import increment adds immutable CAD previews and background
 draft-import jobs; ongoing inventory synchronization remains a subsequent step.

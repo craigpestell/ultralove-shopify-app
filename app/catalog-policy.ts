@@ -7,6 +7,14 @@ export function selectionIds(value: unknown): number[] {
   return value.slice().sort((a, b) => a - b);
 }
 
+export function pageSelection(current: number[], page: number[], checked: boolean): number[] {
+  const selected = selectionIds(current);
+  const pageIds = selectionIds(page);
+  return selectionIds(checked
+    ? [...new Set([...selected, ...pageIds])]
+    : selected.filter((id) => !pageIds.includes(id)));
+}
+
 export function browseFilters(url: URL) {
   const readId = (key: string): number => {
     const values = url.searchParams.getAll(key);
