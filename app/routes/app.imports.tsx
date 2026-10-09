@@ -84,7 +84,7 @@ export default function Imports() {
             <thead><tr><th scope="col">Supplier product</th><th scope="col">Wholesale</th><th scope="col">New draft retail price</th><th scope="col">Result / review</th></tr></thead>
             <tbody>{job.items.map((item) => <tr key={item.supplierId}>
               <td>{supplierText(item.name)}<small>#{item.supplierId} - {item.sku || "Review variant SKUs"} - {item.variantCount} variant(s)</small></td>
-              <td>{item.wholesale}</td><td>{item.retail}{job.status === "PREVIEW" && item.productId && <small>Not applied: existing listing</small>}</td>
+              <td>{item.wholesale}</td><td>{item.retail}{item.productId && (job.status === "PREVIEW" || item.status === "REUSED") && <small>Not applied: existing listing</small>}</td>
               <td>{item.status}{job.status === "PREVIEW" && item.productId && <small>Will reuse existing listing</small>}
                 {item.productId && <small><a href={`https://admin.shopify.com/store/ultralove-integration-lab/products/${item.productId.split("/").at(-1)}`} target="_blank" rel="noreferrer">Review Shopify product</a></small>}
                 {item.warnings.length > 0 && <small>Review required: {item.warnings.join(", ")}</small>}

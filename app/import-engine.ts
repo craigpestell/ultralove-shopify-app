@@ -127,7 +127,7 @@ export const CONTEXT_QUERY = `query ImportContext {
 export const CATALOG_QUERY = `query ImportCatalog($after:String) {
   products(first:100,after:$after) { nodes {
     id handle status tags supplierId:metafield(namespace:"ultralove_catalog",key:"supplier_id"){value}
-    variants(first:1){nodes{sku price}}
+    variants(first:2){nodes{sku price}}
   } pageInfo { hasNextPage endCursor } }
 }`;
 export const CREATE_MUTATION = `mutation ImportDraft($input:ProductSetInput!) {
@@ -201,7 +201,11 @@ export function matchProduct(products: RemoteProduct[], supplierId: number): Rem
     }
   }
   if (matches.size > 1) throw new ImportError(`Duplicate Shopify supplier identities for ${supplierId}.`);
-  return [...matches.values()][0] || null;
+  const found = [...matches.values()][0] || null;
+  if (LEGACY[supplierId] && (!found || found.variants.nodes.length !== 1 || found.variants.nodes[0].sku !== LEGACY[supplierId])) {
+    throw new ImportError("Required single-variant legacy supplier listing is missing or changed.");
+  }
+  return found;
 }
 export async function verifyDraft(api: GraphQL, input: Payload, productId: string) {
   const wanted = new Map(input.variants.map((variant) => {
@@ -246,11 +250,12 @@ export async function verifyDraft(api: GraphQL, input: Payload, productId: strin
 
 export async function importDraft(options: {
   api: GraphQL; products: RemoteProduct[]; input: Payload; supplierId: number; runId: string;
-  attempted: boolean; previouslyMapped: boolean; fresh: boolean; beforeMutation: () => Promise<void>;
+  attempted: boolean; previouslyMapped: boolean; expectedProductId?: string | null; fresh: boolean; beforeMutation: () => Promise<void>;
 }): Promise<{ status: "CREATED" | "REUSED"; productId: string }> {
   const { api, products, input, supplierId, runId } = options;
   const existing = matchProduct(products, supplierId);
   if (existing) {
+    if (options.expectedProductId && existing.id !== options.expectedProductId) throw new ImportError("The saved Shopify mapping was replaced. Manual review is required.");
     if (existing.tags.includes(`ultralove-catalog-run-${runId}`)) {
       await verifyDraft(api, input, existing.id);
       return { status: "CREATED", productId: existing.id };

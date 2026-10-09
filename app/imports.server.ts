@@ -104,7 +104,8 @@ export async function runJob(id: string, shop: string, api: GraphQL, stopping: (
         const claim = await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId: item.supplierId } } });
         const result = await importDraft({
           api, products, input, supplierId: item.supplierId, runId: id,
-          attempted: Boolean(claim?.mutationStartedAt), previouslyMapped: Boolean(claim?.productId),
+          attempted: Boolean(claim?.mutationStartedAt), previouslyMapped: Boolean(claim?.productId || item.productId),
+          expectedProductId: claim?.productId || item.productId,
           fresh: Date.now() - job.createdAt.getTime() <= MAX_PREVIEW_AGE,
           beforeMutation: async () => {
             await db.importClaim.upsert({

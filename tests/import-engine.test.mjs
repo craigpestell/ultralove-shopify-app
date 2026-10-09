@@ -85,6 +85,9 @@ test("unowned collisions and duplicate identities fail before mutation", async (
   assert.throws(() => matchProduct([{ ...product, tags: [] }], 100));
   assert.throws(() => matchProduct([product, { ...product, id: "gid://shopify/Product/2" }], 100));
   await assert.rejects(importDraft({ ...base, products: [{ ...product, tags: [] }], api: async () => { throw new Error("Must not mutate"); } }));
+  assert.throws(() => matchProduct([], 17186), /legacy supplier/);
+  await assert.rejects(importDraft({ ...base, expectedProductId: "gid://shopify/Product/2", products: [product],
+    api: async () => { throw new Error("Must not mutate replaced mappings"); } }), /mapping was replaced/);
 });
 test("fresh import persists a claim before one mutation and verifies exact draft output", async () => {
   const calls = [];
