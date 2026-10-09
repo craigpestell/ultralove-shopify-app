@@ -38,8 +38,8 @@ drafts contain public product metadata, not embedded authentication parameters, 
 are rejected when their saved-pricing baseline no longer matches the server.
 Existing `/app/imports` bookmarks redirect to `/app` with their job and embedded
 authentication query context retained; legacy preview/queue/retry forms remain
-supported. The earlier unified-page design was deployed as release `f986174`;
-the task-oriented redesign requires the normal integration-lab release process.
+supported. The task-oriented redesign is deployed to the integration lab as
+release `779c6ff`, superseding the earlier unified-page design.
 
 The feed-selection catalog rows show the first supplier product image as a
 48-pixel thumbnail. Hover, focus with the keyboard, or tap/click the thumbnail
@@ -424,6 +424,37 @@ The pre-migration protected SQLite backup is
 `20261009T203756676353Z.sqlite`. The previous code release is `90720c0`;
 the `previous` symlink retains that rollback target.
 
+### Task-oriented UX deployment, 2026-10-09
+
+Release `779c6ff` separates Catalog, Selection & pricing, immutable Review,
+Imports, and Inventory into task-focused views. Shared drafts retain selection,
+markup, visibility choices, and browsing context across navigation and tab
+reloads. The redesign does not change import, pricing, or inventory policy and
+requires no new migration.
+
+All 51 tests, TypeScript, ESLint, and app/worker builds passed locally and during
+lab provisioning; GitHub CI also passed for this commit. Authenticated Chrome
+baseline inspection informed the design, and offline browser verification
+covered the redesigned task flow, retry, expiry, override pruning, and inventory
+controls.
+
+Post-deployment authenticated Chrome verification confirmed the real Catalog:
+four task-navigation links, 50 products, wholesale/retail estimate columns,
+the saved 25% default markup, and sticky selection actions. A CAD $17.65
+supplier price displayed a CAD $22.06 retail estimate. Live screenshots are in
+the session evidence directory. Verification stopped when the authorized tab
+independently navigated through other Shopify views, avoiding interference with
+concurrent user interaction. Remaining views and draft persistence were verified
+offline, not rechecked live after deployment. No blocking Catalog error was
+observed, and no save, import, or inventory action was performed.
+
+HTTPS returned 200, foreign-shop requests returned 403, and the app, import
+worker, and Nginx were active. Deployment preserved saved selection `[17537]`,
+25% markup without overrides, all 19 jobs, and the empty inventory enrollment.
+No imports were queued or running. No store data was modified by the deployment.
+The protected SQLite backup is `20261009T220126355823Z.sqlite`; the previous
+release and rollback symlink point to `107030b`.
+
 ## Existing Shopify app
 
 Verified in the Dev Dashboard on 2026-10-09:
@@ -520,7 +551,7 @@ and approval.
 
 ## Current host and rollback
 
-The deployed release is `107030b` on the isolated integration-lab
+The deployed release is `779c6ff` on the isolated integration-lab
 droplet. Node 24.21.0 runs as `ultralove-shopify` on `127.0.0.1:3097`,
 proxied by its separate HTTPS Nginx vhost. Source is under
 `/srv/ultralove-shopify/releases`; `current` selects the release.
