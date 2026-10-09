@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { selectionIds, browseFilters } from "../app/catalog-policy.ts";
+import { selectionIds, browseFilters, supplierText } from "../app/catalog-policy.ts";
+
+test("supplier labels decode HTML entities without rendering supplier markup", () => {
+  assert.equal(supplierText("Lotions &amp; Dusts"), "Lotions & Dusts");
+  assert.equal(supplierText("Name<br>Details &#039;quoted&#039;"), "Name Details 'quoted'");
+  assert.equal(supplierText("&#x1F600;"), "\u{1F600}");
+  assert.equal(supplierText("&lt;script&gt;"), "<script>");
+});
 
 test("selection accepts exactly 50 parents and never an implicit entire catalog", () => {
   assert.equal(selectionIds(Array.from({length: 50}, (_, i) => i + 1)).length, 50);

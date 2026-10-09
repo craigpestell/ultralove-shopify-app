@@ -4,7 +4,7 @@ import { data, Form, Link, useActionData, useLoaderData, useNavigation, useRoute
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticateLabAdmin } from "../shopify.server";
 import db from "../db.server";
-import { browseFilters, selectionIds } from "../catalog-policy";
+import { browseFilters, selectionIds, supplierText } from "../catalog-policy";
 import { categoriesPage, CatalogError, productsPage, validateSelection } from "../catalog.server";
 import "../catalog.css";
 
@@ -98,11 +98,11 @@ export default function Index() {
           <Form method="get" className="catalog-filters">
             <label>Search name or SKU <input name="search" defaultValue={filters.search || ""} maxLength={100} /></label>
             <label>Category
-              <select name="category_id" defaultValue={filters.category_id || 0} key={`${filters.category_id}-${filters.categoryAfter}`}>
+              <select name="category_id" aria-label="Category" defaultValue={filters.category_id || 0} key={`${filters.category_id}-${filters.categoryAfter}`}>
                 <option value="0">All categories</option>
                 {filters.category_id && !categories?.categories.some((category) => category.id === filters.category_id) &&
                   <option value={filters.category_id}>Selected category #{filters.category_id}</option>}
-                {categories?.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                {categories?.categories.map((category) => <option key={category.id} value={category.id}>{supplierText(category.name)}</option>)}
               </select>
             </label>
             <button type="submit" disabled={busy}>Search catalog</button>
@@ -121,7 +121,7 @@ export default function Index() {
                     <td><input type="checkbox" aria-label={`Select supplier product ${product.id}`} checked={ids.includes(product.id)}
                       disabled={!ids.includes(product.id) && ids.length >= 50}
                       onChange={(event) => setIds((current) => event.target.checked ? [...current, product.id] : current.filter((id) => id !== product.id))} /></td>
-                    <td>{product.name.replace(/<[^>]*>/g, " ")} <small>#{product.id} - {product.type}</small></td>
+                    <td>{supplierText(product.name)} <small>#{product.id} - {product.type}</small></td>
                     <td>{product.sku || "Missing SKU - review required"}</td>
                     <td>{product.price === null || product.price === "" ? "Missing price - review required" : `${product.price} CAD`}</td>
                     <td>{stockLabel(product)}</td>
@@ -132,6 +132,7 @@ export default function Index() {
             {products && !products.products.length && <p>No products match these filters.</p>}
             <p>Selected IDs: {ids.length ? ids.join(", ") : "None"}</p>
             <button type="submit" disabled={busy || Boolean(error)}>Save selection (no import)</button>
+            {" "}<button type="button" disabled={busy || !ids.length} onClick={() => setIds([])}>Clear selection</button>
           </Form>
           <p><Link to={`?${params}`}>First product page</Link>{products?.has_more && <> | <Link to={`?${next}`}>Next 50 products</Link></>}</p>
         </div>

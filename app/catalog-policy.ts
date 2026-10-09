@@ -28,3 +28,8 @@ export function browseFilters(url: URL) {
     categoryAfter: readId("category_after"),
   };
 }
+import { decodeHTML } from "entities";
+
+export function supplierText(value: string): string {
+  return decodeHTML(value.replace(/<[^>]*>/g, " "));
+}
