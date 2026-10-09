@@ -67,8 +67,14 @@ test("Online Store discovery checks permissions and never substitutes another sa
   const response = { data: {
     currentAppInstallation: { accessScopes: [{ handle: "read_publications" }, { handle: "write_publications" }] },
     publications: { nodes: [
-      { id: "gid://shopify/Publication/20", catalog: { title: "Point of Sale" } },
-      { id: publicationId, catalog: { title: "Online Store" } },
+      { id: "gid://shopify/Publication/20", catalog: {
+        title: "Channel Catalog 20 for Point of Sale",
+        apps: { nodes: [{ title: "Point of Sale" }], pageInfo: { hasNextPage: false } },
+      } },
+      { id: publicationId, catalog: {
+        title: "Channel Catalog 10 for Online Store",
+        apps: { nodes: [{ title: "Online Store" }], pageInfo: { hasNextPage: false } },
+      } },
     ], pageInfo: { hasNextPage: false } },
   } };
   assert.equal(await onlineStorePublication(async (query) => { assert.equal(query, PUBLICATIONS_QUERY); return response; }), publicationId);
@@ -81,6 +87,10 @@ test("Online Store discovery checks permissions and never substitutes another sa
     { ...response.data.publications, pageInfo: { hasNextPage: true } },
     { ...response.data.publications, nodes: [response.data.publications.nodes[0]] },
     { ...response.data.publications, nodes: Array(2).fill(response.data.publications.nodes[1]) },
+    { ...response.data.publications, nodes: [{ id: publicationId, catalog: null }] },
+    { ...response.data.publications, nodes: [{ id: publicationId,
+      catalog: { apps: { nodes: [{ title: "Online Store" }], pageInfo: { hasNextPage: true } } },
+    }] },
   ]) await assert.rejects(onlineStorePublication(async () => ({ data: { ...response.data, publications } })));
 });
 

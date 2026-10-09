@@ -173,7 +173,7 @@ export const VERIFY_QUERY = `query VerifyDraft($id:ID!,$after:String,$location:I
 export const PUBLICATIONS_QUERY = `query ImportOnlineStorePublication {
   currentAppInstallation { accessScopes { handle } }
   publications(first:100,catalogType:APP) {
-    nodes { id catalog { title } }
+    nodes { id catalog { ... on AppCatalog { apps(first:10) { nodes { title } pageInfo { hasNextPage } } } } }
     pageInfo { hasNextPage }
   }
 }`;
@@ -207,8 +207,12 @@ export async function onlineStorePublication(api: GraphQL): Promise<string> {
   }
   const publications = object(data.publications);
   if (object(publications.pageInfo).hasNextPage !== false) throw new ImportError("Sales channel pagination requires operator review.");
-  const matches = list(publications.nodes).map(object).filter((publication) =>
-    publication.catalog !== null && object(publication.catalog).title === "Online Store");
+  const matches = list(publications.nodes).map(object).filter((publication) => {
+    if (publication.catalog === null) return false;
+    const apps = object(object(publication.catalog).apps);
+    if (object(apps.pageInfo).hasNextPage !== false) throw new ImportError("Sales channel app pagination requires operator review.");
+    return list(apps.nodes).map(object).some((app) => app.title === "Online Store");
+  });
   if (matches.length !== 1) throw new ImportError("Exactly one Online Store publication is required. No other channel will be used.");
   const id = text(matches[0].id);
   importSettings(true, id);

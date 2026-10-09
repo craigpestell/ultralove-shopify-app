@@ -122,8 +122,10 @@ removing current permissions. Update the installed Shopify app's configured
 scopes, obtain merchant authorization, reopen the embedded app, then restart the
 app/worker with the updated environment. Never print or commit the environment.
 Missing permissions produce an explicit preview/worker error, not a draft-shaped
-success fallback. Publication lookup must find exactly one Online Store catalog;
-it never guesses another channel if the Online Store is missing or ambiguous.
+success fallback. Publication lookup identifies Online Store through its
+associated Shopify app, not the catalog's auto-generated display title. It must
+find exactly one publication and never guesses another channel if the Online
+Store is missing or ambiguous.
 
 Run the additive `20261009190000_import_visibility` migration before starting
 the updated app/worker. Existing preview and historical jobs migrate to

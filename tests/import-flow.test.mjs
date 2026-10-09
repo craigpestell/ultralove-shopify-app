@@ -58,7 +58,10 @@ test("published jobs persist opt-in settings and recover an uncertain publicatio
       } };
       if (query === PUBLICATIONS_QUERY) return { data: {
         currentAppInstallation: { accessScopes: [{ handle: "read_publications" }, { handle: "write_publications" }] },
-        publications: { nodes: [{ id: publicationId, catalog: { title: "Online Store" } }], pageInfo: { hasNextPage: false } },
+        publications: { nodes: [{ id: publicationId, catalog: {
+          title: "Channel Catalog for Online Store",
+          apps: { nodes: [{ title: "Online Store" }], pageInfo: { hasNextPage: false } },
+        } }], pageInfo: { hasNextPage: false } },
       } };
       if (query === CATALOG_QUERY) return { data: { products: { nodes: remote ? [remote] : [], pageInfo: { hasNextPage: false } } } };
       if (query === CREATE_MUTATION) {
