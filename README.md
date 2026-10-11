@@ -38,8 +38,9 @@ drafts contain public product metadata, not embedded authentication parameters, 
 are rejected when their saved-pricing baseline no longer matches the server.
 Existing `/app/imports` bookmarks redirect to `/app` with their job and embedded
 authentication query context retained; legacy preview/queue/retry forms remain
-supported. The task-oriented redesign, with uncapped product selections, is
-deployed to the integration lab as release `6228e98`.
+supported. The task-oriented redesign, with uncapped product selections and
+reviewed existing-listing updates/recovery, is deployed to the integration lab
+as release `65e3388`.
 
 The feed-selection catalog rows show the first supplier product image as a
 48-pixel thumbnail. Hover, focus with the keyboard, or tap/click the thumbnail
@@ -524,6 +525,44 @@ override for product 17537, and empty inventory enrollment. No jobs were queued
 or running. The protected SQLite backup is `20261009T221733675607Z.sqlite`;
 the previous release and rollback symlink point to `779c6ff`.
 
+### Reviewed listing updates and recovery deployment, 2026-10-11
+
+Release `65e338820b6704e58ca18c414c00c25fb290b156` adds explicit content,
+additive-image and retail-price update choices, reviewed existing-product
+connections, and deliberate replacement recovery. Existing listings remain
+unchanged by default; missing listings still require explicit recovery.
+The exact pushed git archive was deployed through `ops/provision-lab.sh`.
+No Shopify app configuration, supplier/WordPress code, or production deployment
+was changed.
+
+All 65 tests, TypeScript, ESLint, and app/worker builds passed locally and during
+lab provisioning. The published release's GitHub App checks also passed.
+Automated coverage includes persisted approvals, ownership and variant matching,
+stale reviews, partial operations/retries, uncertain creation, paused inventory
+rebindings, exact CAD prices, and 501-variant price updates in 250/250/1 batches.
+Prior offline browser verification covered keep/update choices, current/proposed
+values, blocking, reconnection and replacement reviews. No live update,
+connection or replacement job was queued for deployment verification; actual
+Shopify mutations for these paths remain verified with mocks, not a live write.
+
+The additive `20261009220000_listing_policy` migration applied successfully.
+All 24 historical jobs retained KEEP defaults and all 407 historical items
+retained empty review/work defaults. Comparison with the pre-migration backup
+confirmed every existing job, item, creation claim and saved-selection field was
+unchanged. The 109 claims and single stored session were preserved. Saved products
+remain `[24347,24351,24353,25624]`, with 20% default markup and a 64% override for
+product 24351. The two enabled inventory bindings, for suppliers 71955 and 19969,
+retained their product/variant mappings, locations, enrollment and revisions;
+their ordinary opt-in synchronization remains enabled.
+
+HTTPS returned 200; app, import/inventory worker and Nginx were active, and both
+app services run as `ultralove-shopify`. No imports were queued or running.
+SQLite integrity and foreign-key checks passed. The protected pre-migration
+backup is `20261011T221825110586Z.sqlite` (0600 in a root-only 0700 directory).
+The previous release and rollback symlink point to
+`6228e989ed0e0c1fb4b9975b1b58dd1158a54316`; code rollback must retain the
+persistent database and additive migration.
+
 ## Existing Shopify app
 
 Verified in the Dev Dashboard on 2026-10-09:
@@ -620,7 +659,7 @@ and approval.
 
 ## Current host and rollback
 
-The deployed release is `6228e98` on the isolated integration-lab
+The deployed release is `65e3388` on the isolated integration-lab
 droplet. Node 24.21.0 runs as `ultralove-shopify` on `127.0.0.1:3097`,
 proxied by its separate HTTPS Nginx vhost. Source is under
 `/srv/ultralove-shopify/releases`; `current` selects the release.
