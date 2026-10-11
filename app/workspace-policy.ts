@@ -14,7 +14,7 @@ export type Draft = Configuration & {
 export const SELECTION_PAGE_SIZE = 25;
 export const signature = (value: Configuration) => pricingSignature(value.selected, value.markup, value.markups);
 
-export function selectedPage(ids: number[], products: Record<string, ProductSummary>, search: string, requestedPage: number) {
+export function selectedPage(ids: number[], products: Record<string, Pick<ProductSummary, "name" | "sku">>, search: string, requestedPage: number) {
   const term = search.trim().replace(/\s+/g, " ").toLowerCase();
   const matches = ids.filter((id) => {
     const product = products[id];

@@ -142,6 +142,10 @@ processes it; public HTTP handlers never execute a root importer.
 Status refreshes automatically and shows per-product results and Shopify links.
 Failed jobs can be retried/reconciled on the same page using their original
 snapshot, not the current working settings.
+Pricing snapshots and import results show 25 products per page, with name,
+SKU and supplier-ID search. Confirmation and **Retry unfinished items** appear
+above the table and apply to the entire immutable snapshot, not the visible
+page or search results. Completed products are skipped during retry.
 By default, existing recognized listings are kept without any mutation,
 including their retailer-edited prices, content, inventory and publication state.
 The importer no longer reuses or requires the old `ultralove-dev-*` test fixtures.
@@ -169,6 +173,14 @@ Large variant sets are read with pagination; price mutations contain at most
 The worker checks for intervening retailer edits and ownership changes before
 continuing, and reconciles durably recorded partial operations rather than
 blindly repeating image uploads or creations.
+Description verification compares HTML5-parsed structure rather than raw
+strings. Equivalent entity encoding, optional closing tags, void-tag syntax
+and attribute order do not cause false failures. Added indentation between
+children of plain list/table containers is ignored, while text, formatting,
+links, images, attributes, inline spacing and preformatted whitespace remain
+significant. This comparison also protects partial-operation reconciliation
+and intervening retailer edits; it does not rewrite WordPress descriptions.
+Unconfirmed updates identify the remaining reviewed fields in the item error.
 
 Under **Connect existing products or recover missing listings**, paste a
 Shopify admin product URL, numeric product ID, or Product GID to explicitly
@@ -176,6 +188,10 @@ associate an unlinked product. The server verifies the target and its variant
 identity before creating a new review. Connecting only authorizes the selected
 fields; **Keep unchanged** connects ownership without refreshing product content
 or retail prices.
+Connection fields also support search and 25-product pages. Edits remain in
+the form state when their products are off-page or filtered out. **Validate
+connections and create fresh review** appears before the fields and submits
+all snapshot products, pricing choices and connection edits.
 
 A previously linked product that is verified missing is automatically proposed
 as **Create replacement** in the import review. No separate replacement checkbox

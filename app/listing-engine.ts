@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { parseFragment, serialize } from "parse5";
+import type { DefaultTreeAdapterTypes } from "parse5";
 import { cadCents, ImportError, MAX_PREVIEW_AGE, ownedProduct, record } from "./import-engine.ts";
 import type { GraphQL, Payload } from "./import-engine.ts";
 import type { ListingPolicy } from "./listing-policy.ts";
@@ -219,13 +221,35 @@ function content(input: Payload) {
   return Object.fromEntries(["title", "descriptionHtml", "vendor"].filter((key) => typeof input[key] === "string")
     .map((key) => [key, input[key] as string]));
 }
+function canonicalDescription(value: string) {
+  const fragment = parseFragment(value);
+  const normalize = (node: DefaultTreeAdapterTypes.Node, preserveWhitespace = false) => {
+    if ("attrs" in node) node.attrs.sort((a, b) => a.name.localeCompare(b.name));
+    const tag = "tagName" in node ? node.tagName : "";
+    const preserve = preserveWhitespace || ["pre", "textarea", "script", "style"].includes(tag) ||
+      ("attrs" in node && node.attrs.some((attribute) => attribute.name === "style" &&
+        /white-space\s*:\s*(?:pre|break-spaces)/i.test(attribute.value)));
+    if ("childNodes" in node) {
+      if (!preserve && "attrs" in node && !node.attrs.length &&
+          ["ul", "ol", "dl", "table", "thead", "tbody", "tfoot", "tr", "colgroup"].includes(tag)) {
+        node.childNodes = node.childNodes.filter((child) => !("value" in child) || !/^[\t\n\f\r ]*$/.test(child.value));
+      }
+      node.childNodes.forEach((child) => normalize(child, preserve));
+    }
+  };
+  normalize(fragment);
+  return serialize(fragment);
+}
+function contentMatches(field: string, before: string, after: string) {
+  return before === after || (field === "descriptionHtml" && canonicalDescription(before) === canonicalDescription(after));
+}
 export function listingChanges(snapshot: ListingSnapshot, input: Payload, policy: ListingPolicy, variantIds: string[]) {
   const changes: ListingReview["changes"] = [];
   if (policy.mode !== "UPDATE") return changes;
   if (policy.content) for (const [field, after] of Object.entries(content(input))) {
     const before = snapshot[field as "title" | "descriptionHtml" | "vendor"];
     const label = field === "title" ? "Product name" : field === "descriptionHtml" ? "Description" : "Vendor";
-    if (before !== after) changes.push({ field: label, before, after });
+    if (!contentMatches(field, before, after)) changes.push({ field: label, before, after });
   }
   if (policy.prices) input.variants.forEach((variant, index) => {
     const existing = snapshot.variants.find((value) => value.id === variantIds[index])!;
@@ -249,7 +273,8 @@ function assertBaseline(current: ListingSnapshot, baseline: ListingSnapshot, inp
   if (!started.length && current.updatedAt !== baseline.updatedAt) throw new ImportError("Shopify listing changed since preview. Review a fresh snapshot.");
   actual.updatedAt = expected.updatedAt;
   if (started.includes("content") && policy.content) for (const [key, after] of Object.entries(content(input))) {
-    if (actual[key as "title"] !== expected[key as "title"] && actual[key as "title"] !== after) {
+    if (!contentMatches(key, actual[key as "title"], expected[key as "title"]) &&
+        !contentMatches(key, actual[key as "title"], after)) {
       throw new ImportError("Reviewed Shopify content changed concurrently. Create a fresh preview.");
     }
     actual[key as "title"] = expected[key as "title"];
@@ -353,7 +378,7 @@ export async function applyListing(options: {
   }
   current = await refresh();
   if (policy.mode === "UPDATE" && policy.content &&
-      Object.entries(content(input)).some(([key, value]) => current[key as "title"] !== value)) {
+      Object.entries(content(input)).some(([key, value]) => !contentMatches(key, current[key as "title"], value))) {
     await start("content");
     await mutation(api, LISTING_UPDATE_MUTATION, { product: { id: current.id, ...content(input) } }, "productUpdate");
   }
@@ -382,9 +407,12 @@ export async function applyListing(options: {
     }
   }
   current = await refresh();
+  const remaining = listingChanges(current, input, policy, work.variantIds);
   if (!ownedProduct(current, supplierId) || matchListingVariants(current, input, false).join() !== work.variantIds.join() ||
-      listingChanges(current, input, policy, work.variantIds).length) {
-    throw new ImportError("Shopify did not confirm all reviewed changes. Retry reconciliation; completed operations remain protected.");
+      remaining.length) {
+    throw new ImportError(remaining.length
+      ? `Shopify did not confirm reviewed fields: ${[...new Set(remaining.map((change) => change.field))].join(", ")}. Retry reconciliation; completed operations remain protected.`
+      : "Shopify did not confirm all reviewed changes. Retry reconciliation; completed operations remain protected.");
   }
   return { status: review.action === "LINK" ? "LINKED" : "UPDATED", productId: current.id };
 }

@@ -1,22 +1,74 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { parseFragment, serialize } from "parse5";
 import { MAX_PREVIEW_AGE, matchProduct } from "../app/import-engine.ts";
 import { defaultListingPolicy } from "../app/listing-policy.ts";
 import {
   applyListing, assertLinkOwnership, listingChanges, listingSnapshot, matchListingVariants,
-  LISTING_UPDATE_MUTATION, LISTING_PRICES_MUTATION, LISTING_METADATA_MUTATION,
+  LISTING_QUERY, LISTING_UPDATE_MUTATION, LISTING_PRICES_MUTATION, LISTING_METADATA_MUTATION,
 } from "../app/listing-engine.ts";
 import { listingApi, retailerListing, supplierInput, runId } from "./fixtures/listing-fixture.mjs";
 
-async function reviewed(mock, policy, action = "UPDATE") {
+async function reviewed(mock, policy, action = "UPDATE", input = supplierInput) {
   const baseline = await listingSnapshot(mock.api, mock.state.product.id);
-  const variantIds = matchListingVariants(baseline, supplierInput, action === "LINK");
+  const variantIds = matchListingVariants(baseline, input, action === "LINK");
   const state = { work: { baseline, variantIds, capturedAt: Date.now() } };
-  const options = { api: mock.api, input: supplierInput, policy, supplierId: 100, runId,
-    review: { action, targetId: baseline.id, changes: listingChanges(baseline, supplierInput, policy, variantIds), message: null },
+  const options = { api: mock.api, input, policy, supplierId: 100, runId,
+    review: { action, targetId: baseline.id, changes: listingChanges(baseline, input, policy, variantIds), message: null },
     saveWork: async (work) => { state.work = structuredClone(work); } };
   return { state, run: () => applyListing({ ...options, work: state.work }), options };
 }
+test("HTML entities, optional paragraph endings, void tags and harmless list indentation are equivalent", async () => {
+  const mock = listingApi();
+  mock.state.product.descriptionHtml = '<p>It\'s &amp; works<br><img alt="Image" src="https://example.com/a.jpg"></p><ul>\n<li>First</li>\n<li>Second</li>\n</ul>';
+  const input = { ...supplierInput, title: mock.state.product.title, vendor: mock.state.product.vendor,
+    descriptionHtml: '<p>It&#039;s &amp; works<br/><img src="https://example.com/a.jpg" alt="Image"/><ul><li>First</li><li>Second</li></ul>' };
+  const review = await reviewed(mock, { ...defaultListingPolicy(), mode: "UPDATE", content: true }, "UPDATE", input);
+  assert.deepEqual(review.options.review.changes, []);
+  assert.equal((await review.run()).status, "UPDATED");
+  assert.equal(mock.state.calls.length, 0, "equivalent HTML does not trigger repeated content writes");
+});
+
+test("Shopify-normalized content is verified and uncertain completed writes reconcile without resending", async () => {
+  for (const uncertain of [false, true]) {
+    const mock = listingApi();
+    mock.state.before = (query) => {
+      if (query === LISTING_QUERY) mock.state.product.descriptionHtml =
+        serialize(parseFragment(mock.state.product.descriptionHtml)).replace(/<ul><li>/g, "<ul>\n<li>");
+    };
+    const input = { ...supplierInput, descriptionHtml: '<p>New &#039;details&#039;<br/><ul><li>Item</li></ul>' };
+    const review = await reviewed(mock, { ...defaultListingPolicy(), mode: "UPDATE", content: true }, "UPDATE", input);
+    if (uncertain) {
+      mock.state.failAfter = LISTING_UPDATE_MUTATION;
+      await assert.rejects(review.run(), /Connection lost/);
+      mock.state.failAfter = null;
+    }
+    assert.equal((await review.run()).status, "UPDATED");
+    await review.run();
+    assert.equal(mock.state.calls.length, 1);
+  }
+});
+
+test("HTML comparison preserves meaningful text, formatting, URLs and significant whitespace", () => {
+  const baseline = retailerListing();
+  const policy = { ...defaultListingPolicy(), mode: "UPDATE", content: true };
+  for (const [before, after] of [
+    ["<p>First</p>", "<p>Second</p>"],
+    ["<b>Same</b>", "<i>Same</i>"],
+    ['<a href="https://example.com/one">Same</a>', '<a href="https://example.com/two">Same</a>'],
+    ['<img src="https://example.com/one">', '<img src="https://example.com/two">'],
+    ['<p style="color:red">Same</p>', '<p style="color:blue">Same</p>'],
+    ["<pre>First\nSecond</pre>", "<pre>First Second</pre>"],
+    ['<ul style="white-space:pre"><li>Item</li></ul>', '<ul style="white-space:pre">\n<li>Item</li></ul>'],
+    ["&lt;b&gt;Same&lt;/b&gt;", "<b>Same</b>"],
+    ["<span>A</span> <span>B</span>", "<span>A</span><span>B</span>"],
+  ]) {
+    const changes = listingChanges({ ...baseline, descriptionHtml: before },
+      { ...supplierInput, title: baseline.title, vendor: baseline.vendor, descriptionHtml: after }, policy, []);
+    assert.equal(changes.length, 1);
+    assert.equal(changes[0].field, "Description");
+  }
+});
 test("selected content, prices and additive deduplicated images preserve product/variant identity and retailer fields", async () => {
   for (const field of ["content", "prices", "images"]) {
     const mock = listingApi();

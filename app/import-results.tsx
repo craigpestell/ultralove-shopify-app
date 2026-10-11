@@ -5,7 +5,7 @@ import { MAX_PREVIEW_AGE } from "./import-engine";
 import { supplierText } from "./catalog-policy";
 import { pricingSignature } from "./pricing-policy";
 import type { MarkupOverrides } from "./pricing-policy";
-import { statusLabel } from "./workspace-policy";
+import { selectedPage, statusLabel } from "./workspace-policy";
 import { listingSignature } from "./listing-policy";
 import type { ListingPolicy } from "./listing-policy";
 import ListingRecovery from "./listing-recovery";
@@ -23,6 +23,9 @@ export default function ImportResults({ job, history, ids, markup, markups, list
   const revalidator = useRevalidator();
   const [now, setNow] = useState(() => Date.now());
   const [attentionOnly, setAttentionOnly] = useState(false);
+  const [browse, setBrowse] = useState({ jobId: job?.id, search: "", page: 1 });
+  const search = browse.jobId === job?.id ? browse.search : "";
+  const page = browse.jobId === job?.id ? browse.page : 1;
   const active = job?.status === "QUEUED" || job?.status === "RUNNING";
   const freshnessRequired = job?.status === "PREVIEW" || (job?.status === "FAILED" &&
     job.items.some((item) => item.status === "FAILED" && ["UPDATE", "LINK"].includes(item.listing.action)));
@@ -47,6 +50,9 @@ export default function ImportResults({ job, history, ids, markup, markups, list
     (job.status === "PREVIEW" && item.listing.action === "RECREATE")).length ?? 0;
   const items = job?.items.filter((item) => !attentionOnly || !attention || item.error || item.warnings.length || item.listing.action === "BLOCKED" ||
     (job.status === "PREVIEW" && item.listing.action === "RECREATE")) ?? [];
+  const results = selectedPage(items.map((item) => item.supplierId),
+    Object.fromEntries(items.map((item) => [item.supplierId, { name: item.name, sku: item.sku }])), search, page);
+  const visible = items.filter((item) => results.ids.includes(item.supplierId));
 
   return <div className="imports-layout">
     {job ? <section className="workspace-panel" aria-labelledby="job-heading">
@@ -71,14 +77,40 @@ export default function ImportResults({ job, history, ids, markup, markups, list
         {replacements} previously linked product{replacements === 1 ? " is" : "s are"} confirmed missing. Confirmation will create replacements with new product and variant IDs, using this snapshot&apos;s prices and new-product visibility. Previous retailer edits and collection membership are not restored.
       </s-banner>}
       {active && <p>Processing in the background. Results refresh automatically; you can leave this view without stopping the import.</p>}
-      {attention > 0 && <label className="checkbox-label"><span><input type="checkbox" checked={attentionOnly} onChange={(event) => setAttentionOnly(event.currentTarget.checked)} /> Show only products needing review ({attention})</span></label>}
+      {blocked && <s-banner heading="Resolve product connections before importing" tone="warning">Reconnect existing listings or pause and reconcile inventory as indicated below, then create a fresh review. Verified missing products are proposed as replacements; nothing changes before confirmation.</s-banner>}
+      {(job.status === "PREVIEW" || job.status === "FAILED") && <Form key={`${job.id}:${job.status}`} method="post" className="catalog-confirmation selection-bar">
+        <input type="hidden" name="intent" value={job.status === "FAILED" ? "retry" : "queue"} />
+        <input type="hidden" name="job" value={job.id} />
+        <div><label className="checkbox-label"><span><input name="confirm" type="checkbox" value={job.confirmation} required disabled={busy || expired || changed || blocked} /> I confirm these products, CAD prices, connections, and reviewed changes.
+          {job.publicationId ? " Activate and publish new products to Online Store." : job.active ? " Activate new products without publication." : " Create any new products as unpublished drafts."}
+          {" "}{job.listingPolicy.mode === "UPDATE" ? "Apply only the selected updates to existing listings; preserve their publication and inventory." : "Keep existing product content and prices unchanged."}</span></label>
+          <small>Applies to all {job.items.length} products in this snapshot, not just the visible page or search results.</small>
+          {replacements > 0 && <small>This confirmation also authorizes the {replacements} reviewed replacement{replacements === 1 ? "" : "s"}.</small>}
+          {job.status === "FAILED" && <small>Retries reconcile unfinished items only, using this snapshot. Uncertain creations require review, never blind recreation.</small>}</div>
+        <s-button type="submit" variant="primary" disabled={busy || expired || changed || blocked} loading={busy}>
+          {job.status === "FAILED" ? "Retry unfinished items" : job.items.some((item) => ["UPDATE", "LINK", "RECREATE"].includes(item.listing.action)) ?
+            "Apply reviewed changes" : `Import ${job.items.length} product${job.items.length === 1 ? "" : "s"}`}
+        </s-button>
+      </Form>}
+      <div className="catalog-filters" role="search" aria-label="Search pricing snapshot">
+        <label>Search snapshot products
+          <input type="search" maxLength={100} placeholder="Product name, SKU or ID" value={search}
+            onChange={(event) => setBrowse({ jobId: job.id, search: event.currentTarget.value, page: 1 })} />
+        </label>
+        <s-button disabled={!search} onClick={() => setBrowse({ jobId: job.id, search: "", page: 1 })}>Clear snapshot search</s-button>
+      </div>
+      {attention > 0 && <label className="checkbox-label"><span><input type="checkbox" checked={attentionOnly} onChange={(event) => {
+        setAttentionOnly(event.currentTarget.checked);
+        setBrowse({ jobId: job.id, search, page: 1 });
+      }} /> Show only products needing review ({attention})</span></label>}
+      <p role="status">Showing {results.start}–{results.end} of {results.total} matching products · {job.items.length} in this snapshot</p>
       {/* A focusable region lets keyboard users scroll exact pricing and results. */}
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
       <div className="catalog-table" tabIndex={0} role="region" aria-label="Pricing snapshot and product results">
         <table>
           <caption>Exact variant prices in CAD. This snapshot cannot be edited.</caption>
           <thead><tr><th scope="col">Product</th><th scope="col">Markup</th><th scope="col">Wholesale</th><th scope="col">Retail</th><th scope="col">Result / review</th></tr></thead>
-          <tbody>{items.map((item) => <tr key={item.supplierId}>
+          <tbody>{visible.map((item) => <tr key={item.supplierId}>
             <td><strong>{supplierText(item.name)}</strong><small>{item.sku || "Review variant SKUs"} · {item.variantCount} variant(s)</small></td>
             <td>{item.markup}%{job.markups[item.supplierId] !== undefined && <small>Product override</small>}</td>
             <td>{item.wholesale}</td><td><strong>{item.retail}</strong>{item.productId && (job.listingPolicy.mode === "KEEP" || !job.listingPolicy.prices) && ["KEEP", "LINK", "UPDATE"].includes(item.listing.action) && <small>Not applied to existing listing</small>}</td>
@@ -102,21 +134,13 @@ export default function ImportResults({ job, history, ids, markup, markups, list
         </table>
       </div>
       {!items.length && attentionOnly && <p>No products need review in this job. Clear the filter to see all results.</p>}
+      {!!items.length && !results.total && <p>No snapshot products match this search. Clear the search to see all products.</p>}
+      <nav className="catalog-pagination" aria-label="Pricing snapshot pagination">
+        <s-button disabled={results.page === 1} onClick={() => setBrowse({ jobId: job.id, search, page: results.page - 1 })}>Previous</s-button>
+        <span>Page {results.page} of {results.pages}</span>
+        <s-button disabled={results.page === results.pages} onClick={() => setBrowse({ jobId: job.id, search, page: results.page + 1 })}>Next</s-button>
+      </nav>
       {(job.status === "PREVIEW" || job.status === "FAILED") && <ListingRecovery key={job.id} job={job} busy={busy} onPreview={onRecoveryPreview} />}
-      {blocked && <s-banner heading="Resolve product connections before importing" tone="warning">Reconnect existing listings or pause and reconcile inventory as indicated below, then create a fresh review. Verified missing products are proposed as replacements; nothing changes before confirmation.</s-banner>}
-      {(job.status === "PREVIEW" || job.status === "FAILED") && <Form key={`${job.id}:${job.status}`} method="post" className="catalog-confirmation selection-bar">
-        <input type="hidden" name="intent" value={job.status === "FAILED" ? "retry" : "queue"} />
-        <input type="hidden" name="job" value={job.id} />
-        <div><label className="checkbox-label"><span><input name="confirm" type="checkbox" value={job.confirmation} required disabled={busy || expired || changed || blocked} /> I confirm these products, CAD prices, connections, and reviewed changes.
-          {job.publicationId ? " Activate and publish new products to Online Store." : job.active ? " Activate new products without publication." : " Create any new products as unpublished drafts."}
-          {" "}{job.listingPolicy.mode === "UPDATE" ? "Apply only the selected updates to existing listings; preserve their publication and inventory." : "Keep existing product content and prices unchanged."}</span></label>
-          {replacements > 0 && <small>This confirmation also authorizes the {replacements} reviewed replacement{replacements === 1 ? "" : "s"}.</small>}
-          {job.status === "FAILED" && <small>Retries reconcile unfinished items only, using this snapshot. Uncertain creations require review, never blind recreation.</small>}</div>
-        <s-button type="submit" variant="primary" disabled={busy || expired || changed || blocked} loading={busy}>
-          {job.status === "FAILED" ? "Retry unfinished items" : job.items.some((item) => ["UPDATE", "LINK", "RECREATE"].includes(item.listing.action)) ?
-            "Apply reviewed changes" : `Import ${job.items.length} product${job.items.length === 1 ? "" : "s"}`}
-        </s-button>
-      </Form>}
       <details className="job-details"><summary>Job details</summary><p>Reference: {job.id}</p><p>Created {timestamp(job.createdAt)}. Publishing waits for ready images. Pricing and selected updates are fixed for this job. Visibility choices apply only to new products.</p></details>
     </section> : mode === "review" ? <section className="workspace-panel workspace-empty"><h2>No snapshot to review</h2><p>Choose your products and pricing first. Nothing imports without confirmation.</p><Link className="workspace-primary" to={selectionHref}>Review selection & pricing</Link></section> : null}
     {mode === "imports" && <section className="workspace-panel" aria-labelledby="history-heading">
