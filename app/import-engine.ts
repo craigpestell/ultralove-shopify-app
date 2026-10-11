@@ -19,6 +19,8 @@ export type RemoteProduct = {
   supplierId: { value: string } | null; variants: { nodes: { sku: string; price: string }[] };
 };
 export const MAX_PREVIEW_AGE = 10 * 60 * 1000;
+export const IMAGE_READY_ATTEMPTS = 10;
+export const IMAGE_READY_INTERVAL_MS = 2000;
 export type ImportSettings = { active: boolean; publicationId: string | null };
 
 export function importChoices(form: FormData) {
@@ -231,20 +233,39 @@ async function finishNewProduct(api: GraphQL, input: Payload, product: RemotePro
   const publicationId = settings.publicationId;
   let published = false;
   if (publicationId) {
-    const state = object((await request(api, PUBLICATION_STATE_QUERY, { id: product.id, publicationId })).product);
-    if (state.id !== product.id || state.status !== product.status || typeof state.publishedOnPublication !== "boolean") {
-      throw new ImportError("Imported product publication state changed unexpectedly. Manual review is required.");
-    }
-    published = state.publishedOnPublication;
-    if (!published) {
-      const media = object(state.media);
-      const expectedImages = input.files === undefined ? 0 : list(input.files).length;
-      const images = list(media.nodes).map(object);
-      if (object(media.pageInfo).hasNextPage !== false || images.length !== expectedImages ||
-          images.some((image) => image.status !== "READY")) {
-        throw new ImportError("Product images are missing, processing or failed. Review images in Shopify, then retry; the product was not published.");
+    const expectedImages = input.files === undefined ? 0 : list(input.files).length;
+    let waitedForImages = false;
+    for (let attempt = 0; attempt < IMAGE_READY_ATTEMPTS; attempt++) {
+      const state = object((await request(api, PUBLICATION_STATE_QUERY, { id: product.id, publicationId })).product);
+      if (state.id !== product.id || state.status !== product.status || typeof state.publishedOnPublication !== "boolean") {
+        throw new ImportError("Imported product publication state changed unexpectedly. Manual review is required.");
       }
+      published = state.publishedOnPublication;
+      if (published) break;
+      const media = object(state.media);
+      const images = list(media.nodes).map(object);
+      if (object(media.pageInfo).hasNextPage !== false || images.length > expectedImages) {
+        throw new ImportError("Product images do not match the reviewed import. Review images in Shopify, then retry; the product was not published.");
+      }
+      if (images.some((image) => image.status === "FAILED")) {
+        throw new ImportError("Product images failed processing in Shopify. Review images in Shopify, then retry; the product was not published.");
+      }
+      if (images.some((image) => !["READY", "UPLOADED", "PROCESSING"].includes(text(image.status)))) {
+        throw new ImportError("Product images have an unexpected processing status. Review images in Shopify; the product was not published.");
+      }
+      if (images.length === expectedImages && images.every((image) => image.status === "READY")) {
+        break;
+      }
+      if (attempt === IMAGE_READY_ATTEMPTS - 1) {
+        throw new ImportError(images.length < expectedImages
+          ? "Expected product images are still missing in Shopify after waiting. Review images, then retry; the product was not published."
+          : "Shopify is still processing product images after waiting. Retry shortly; the product was not published.");
+      }
+      if (attempt === 0) console.info("Waiting for Shopify product images.", product.id);
+      waitedForImages = true;
+      await new Promise<void>((resolve) => setTimeout(resolve, IMAGE_READY_INTERVAL_MS));
     }
+    if (waitedForImages) await verifyDraft(api, input, product.id, product.status === "ACTIVE" ? "ACTIVE" : "DRAFT");
   }
   if (product.status === "DRAFT") {
     const result = object((await request(api, ACTIVATE_MUTATION, { product: { id: product.id, status: "ACTIVE" } })).productUpdate);

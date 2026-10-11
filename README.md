@@ -201,8 +201,14 @@ the CAD lab store. Unsafe/unknown/shared stock stays zero with review warnings,
 as in the existing payload policy. New source variants, SKU, price, barcode,
 inventory policy and stock are verified before activation or publication.
 Draft-only and Active-only jobs can finish while images are processing. Publishing
-requires all expected product images to be READY; missing, processing or failed
-images leave that item failed for explicit review and retry, without publishing.
+requires all expected product images to be READY. New products and replacements
+wait for asynchronous image processing with at most 10 readiness reads spaced
+2 seconds apart (18 seconds of waiting). After waiting, variant/pricing/inventory
+verification runs again before activation/publication. Failed, unexpected or
+truncated media stops immediately; missing or still-processing images after the
+bounded wait produce distinct retry messages without publishing. The saved new
+product identity is retained, so retry finishes that same listing rather than
+creating another product.
 The worker confirms Active status and Online Store publication before recording
 success. A later failure may leave an already-created product Active but not
 published; the per-item error explains the remaining action. Its Shopify product
