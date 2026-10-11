@@ -59,7 +59,7 @@ Existing `/app/imports` bookmarks redirect to `/app` with their job and embedded
 authentication query context retained; legacy preview/queue/retry forms remain
 supported. The task-oriented redesign, with uncapped product selections and
 reviewed existing-listing updates/recovery, is deployed to the integration lab
-as release `2b80eed`.
+as release `6d4d945`, including selection search and pagination.
 
 The feed-selection catalog rows show the first supplier product image as a
 48-pixel thumbnail. Hover, focus with the keyboard, or tap/click the thumbnail
@@ -626,6 +626,46 @@ The previous release and rollback symlink point to
 `65e338820b6704e58ca18c414c00c25fb290b156`. Production, supplier code and Shopify
 app configuration were untouched.
 
+### Selected-product search and pagination deployment, 2026-10-11
+
+Release `6d4d945e6564a95ab1d09b1626fce3a28acae1ff` adds 25-row selection
+pages and full-selection name/SKU/ID search with progressively loaded public
+summaries. It was committed locally and deployed from that exact archive;
+these release commits have not been pushed.
+
+All 66 tests, typecheck, lint, app/worker builds and Polaris App Home v1
+validation passed locally. The provisioner repeated all 66 tests and static/build
+checks on the lab; no migrations were pending. The offline browser verified 300
+fresh-session selections, off-page name/SKU search, page/override persistence
+through reloads, a 300-item pricing preview containing the off-page override,
+explicit detail-loading failure/retry without lost edits, and no horizontal
+overflow at a 390 CSS-pixel viewport.
+
+The dev supplier's restricted proxy was upgraded first, retaining its existing
+forced-command, key and feed permissions. Its previous contents exactly matched
+the prior release. A root-only rollback copy is retained at
+`/var/backups/ultralove-catalog-proxy.before-selection-search.php`; restore that
+only after rolling back the app. The unchanged supplier feed client and all
+WordPress web/plugin/theme code remain untouched.
+
+Live read-only checks through the deployed adapter and restricted transport
+verified details for all 154 saved selections in batches of 50/50/50/4.
+HTTPS returned 200; app, worker and Nginx were active. Unauthenticated detail
+requests were rejected without returning supplier data.
+SQLite integrity and foreign keys passed; all 28 jobs, 582 items and 109 claims
+were preserved exactly, as were selected IDs, default markup, inventory
+identities, mappings, locations, enablement and revisions. A normal app POST
+saved one retail-markup override during post-deploy verification; its matching
+timestamp explains the changed pricing row, and that edit was retained.
+The two pre-existing **Invalid inventory response.** failures remain unresolved.
+
+The protected deployment backup is `20261011T230646654301Z.sqlite` (0600).
+The preflight comparison snapshot is
+`selection-baseline-20261011T230516Z.sqlite` (0600). The previous app release and
+rollback symlink point to `2b80eed72339095ecef8296971c39dfc232aaae1`.
+Production and Shopify app configuration were not changed, and no live
+import/update/replacement jobs were queued by verification.
+
 ## Existing Shopify app
 
 Verified in the Dev Dashboard on 2026-10-09:
@@ -722,7 +762,7 @@ and approval.
 
 ## Current host and rollback
 
-The deployed release is `2b80eed` on the isolated integration-lab
+The deployed release is `6d4d945` on the isolated integration-lab
 droplet. Node 24.21.0 runs as `ultralove-shopify` on `127.0.0.1:3097`,
 proxied by its separate HTTPS Nginx vhost. Source is under
 `/srv/ultralove-shopify/releases`; `current` selects the release.
