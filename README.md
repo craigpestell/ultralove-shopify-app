@@ -43,7 +43,7 @@ Existing `/app/imports` bookmarks redirect to `/app` with their job and embedded
 authentication query context retained; legacy preview/queue/retry forms remain
 supported. The task-oriented redesign, with uncapped product selections and
 reviewed existing-listing updates/recovery, is deployed to the integration lab
-as release `65e3388`.
+as release `2b80eed`.
 
 The feed-selection catalog rows show the first supplier product image as a
 48-pixel thumbnail. Hover, focus with the keyboard, or tap/click the thumbnail
@@ -577,6 +577,37 @@ The previous release and rollback symlink point to
 `6228e989ed0e0c1fb4b9975b1b58dd1158a54316`; code rollback must retain the
 persistent database and additive migration.
 
+### Replacement defaults and catalog wording deployment, 2026-10-11
+
+Release `2b80eed72339095ecef8296971c39dfc232aaae1` proposes verified missing
+listings as replacements in the normal import review, without an additional
+replacement checkbox or recovery preview. Existing and uncertain listings,
+failed lookups, and unresolved inventory activity remain guarded. Historical
+previews are immutable; create a fresh preview to use the new default.
+The catalog heading is now **UltraLove's catalog**, and numeric availability
+reads **N units** with unchanged nonnumeric stock states.
+
+The exact local committed git archive was deployed through `ops/provision-lab.sh`.
+All 65 tests, type-check, lint, and app/worker builds passed during provisioning;
+there were no pending migrations. Prior targeted tests and offline browser checks
+verified replacement review/confirmation, reconnection, blocked identity changes,
+and catalog wording. No live replacement or update job was queued for verification.
+This release and its deployment record were committed locally, not pushed.
+
+HTTPS returned 200 and app, worker, and Nginx were active. Database integrity and
+foreign-key checks passed. Backup comparison confirmed all 27 jobs, 428 items,
+109 claims and saved selection/pricing fields were unchanged. Saved products
+remain `[17539,24382,24388,24480,25624]`, with 20% default markup and no overrides.
+Both inventory identities, mappings, locations, enrollments and revisions were
+preserved. Before and after deployment, suppliers 71955 and 19969 were enabled
+but FAILED with **Invalid inventory response.** This pre-existing inventory
+issue remains unresolved; running worker health does not imply successful sync.
+
+The protected database backup is `20261011T224538901621Z.sqlite` (0600).
+The previous release and rollback symlink point to
+`65e338820b6704e58ca18c414c00c25fb290b156`. Production, supplier code and Shopify
+app configuration were untouched.
+
 ## Existing Shopify app
 
 Verified in the Dev Dashboard on 2026-10-09:
@@ -673,7 +704,7 @@ and approval.
 
 ## Current host and rollback
 
-The deployed release is `65e3388` on the isolated integration-lab
+The deployed release is `2b80eed` on the isolated integration-lab
 droplet. Node 24.21.0 runs as `ultralove-shopify` on `127.0.0.1:3097`,
 proxied by its separate HTTPS Nginx vhost. Source is under
 `/srv/ultralove-shopify/releases`; `current` selects the release.
