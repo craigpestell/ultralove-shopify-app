@@ -592,7 +592,9 @@ All 65 tests, type-check, lint, and app/worker builds passed during provisioning
 there were no pending migrations. Prior targeted tests and offline browser checks
 verified replacement review/confirmation, reconnection, blocked identity changes,
 and catalog wording. No live replacement or update job was queued for verification.
-This release and its deployment record were committed locally, not pushed.
+This release and its deployment record were initially committed locally, then
+published to `main`. The running SHA is the verified application commit; later
+documentation-only commits do not require another deployment or service restart.
 
 HTTPS returned 200 and app, worker, and Nginx were active. Database integrity and
 foreign-key checks passed. Backup comparison confirmed all 27 jobs, 428 items,
