@@ -59,7 +59,8 @@ Existing `/app/imports` bookmarks redirect to `/app` with their job and embedded
 authentication query context retained; legacy preview/queue/retry forms remain
 supported. The task-oriented redesign, with uncapped product selections and
 reviewed existing-listing updates/recovery, is deployed to the integration lab
-as release `6d4d945`, including selection search and pagination.
+as release `155cc24`, including selection search/pagination and asynchronous
+image-readiness waiting before publication.
 
 The feed-selection catalog rows show the first supplier product image as a
 48-pixel thumbnail. Hover, focus with the keyboard, or tap/click the thumbnail
@@ -636,8 +637,9 @@ app configuration were untouched.
 
 Release `6d4d945e6564a95ab1d09b1626fce3a28acae1ff` adds 25-row selection
 pages and full-selection name/SKU/ID search with progressively loaded public
-summaries. It was committed locally and deployed from that exact archive;
-these release commits have not been pushed.
+summaries. It was initially committed locally and deployed from that exact
+archive; those commits were subsequently published with the image-readiness fix
+below.
 
 All 66 tests, typecheck, lint, app/worker builds and Polaris App Home v1
 validation passed locally. The provisioner repeated all 66 tests and static/build
@@ -671,6 +673,43 @@ The preflight comparison snapshot is
 rollback symlink point to `2b80eed72339095ecef8296971c39dfc232aaae1`.
 Production and Shopify app configuration were not changed, and no live
 import/update/replacement jobs were queued by verification.
+
+### Image-readiness waiting deployment, 2026-10-11
+
+Release `155cc24dc13ee4d5db6c0c501457ca5c61483d0c` was committed, pushed and
+deployed from that exact archive to the isolated integration lab. This push also
+published the preceding selection-search release and its deployment record.
+GitHub App checks passed for the release.
+
+Read-only diagnosis sampled two failed replacement items and one failed new
+creation. All three already existed as DRAFT products with READY media and no
+Shopify media errors: the previous immediate readiness check had rejected
+asynchronous processing. The shared new-product/replacement completion path now
+waits for up to 10 readiness reads, 2 seconds apart, while retaining the reviewed
+product identity, status, image-count and publication checks. Failed or malformed
+media still blocks publication, and verification of variants/prices/stock repeats
+after waiting. Retrying reconciles the saved draft instead of recreating it.
+
+All 68 tests, typecheck, lint and app/worker builds passed locally and on the
+deployment host. Tests cover missing/UPLOADED/PROCESSING-to-READY transitions,
+bounded timeouts, distinct failed-media messages, API failures and concurrent
+status/price changes without premature publication or duplicate creation.
+No migrations were pending.
+
+HTTPS returned 200; app, worker and Nginx were active, and the deployed worker
+bundle contains the fix. SQLite integrity and foreign keys passed. All 29 jobs,
+736 items, 207 creation claims and saved selection/pricing fields were unchanged,
+as were inventory identities, mappings, locations, enablement and revisions.
+The 201 historical image-error rows remain until their jobs are explicitly
+retried; deployment does not silently clear errors or queue publication.
+The two pre-existing **Invalid inventory response.** failures remain unresolved.
+
+The protected database backup is `20261011T232347089609Z.sqlite` (0600).
+The preflight snapshot is `image-ready-baseline-20261011T232116Z.sqlite` (0600).
+The previous app release and rollback symlink point to
+`6d4d945e6564a95ab1d09b1626fce3a28acae1ff`. Production, supplier proxy/feed,
+Shopify app configuration and scopes were unchanged. Verification queued no
+live imports and performed no product mutations.
 
 ## Existing Shopify app
 
@@ -768,7 +807,7 @@ and approval.
 
 ## Current host and rollback
 
-The deployed release is `6d4d945` on the isolated integration-lab
+The deployed release is `155cc24` on the isolated integration-lab
 droplet. Node 24.21.0 runs as `ultralove-shopify` on `127.0.0.1:3097`,
 proxied by its separate HTTPS Nginx vhost. Source is under
 `/srv/ultralove-shopify/releases`; `current` selects the release.
