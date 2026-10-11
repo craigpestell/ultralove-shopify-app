@@ -54,8 +54,15 @@ try {
             break;
         case 'selection':
             $result = $client->selected_products( $request['ids'] ?? array() );
-            $result = array( 'ids' => array_values( array_filter( array_keys( $result['products'] ),
-                static fn( $id ) => $result['products'][$id]['parent_id'] === 0 ) ) );
+            $parents = array_values( array_filter( $result['products'],
+                static fn( $product ) => $product['parent_id'] === 0 ) );
+            $result = array(
+                'ids' => array_column( $parents, 'id' ),
+                'products' => array_map( static fn( $product ) => array(
+                    'id' => $product['id'], 'name' => $product['name'], 'sku' => $product['sku'],
+                    'price' => $product['price'], 'type' => $product['type'],
+                ), $parents ),
+            );
             break;
         case 'inventory-sync':
             if ( ! method_exists( $client, 'inventory_state' ) ) {

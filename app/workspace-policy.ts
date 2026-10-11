@@ -1,4 +1,4 @@
-import { selectionIds } from "./catalog-policy";
+import { selectionIds, supplierText } from "./catalog-policy";
 import { markupOverrides, markupPercent, pricingSignature } from "./pricing-policy";
 import type { MarkupOverrides } from "./pricing-policy";
 import { defaultListingPolicy, listingPolicy } from "./listing-policy";
@@ -9,8 +9,23 @@ export type ProductSummary = { id: number; name: string; sku: string; price: str
 export type Draft = Configuration & {
   baseline: string; products: Record<string, ProductSummary>; browse: string; active: boolean; publish: boolean;
   listingPolicy: ListingPolicy;
+  selectionSearch: string; selectionPage: number;
 };
+export const SELECTION_PAGE_SIZE = 25;
 export const signature = (value: Configuration) => pricingSignature(value.selected, value.markup, value.markups);
+
+export function selectedPage(ids: number[], products: Record<string, ProductSummary>, search: string, requestedPage: number) {
+  const term = search.trim().replace(/\s+/g, " ").toLowerCase();
+  const matches = ids.filter((id) => {
+    const product = products[id];
+    return !term || `${supplierText(product?.name ?? "")} ${supplierText(product?.sku ?? "")} ${id} #${id}`.replace(/\s+/g, " ").toLowerCase().includes(term);
+  });
+  const pages = Math.max(1, Math.ceil(matches.length / SELECTION_PAGE_SIZE));
+  const page = Math.min(pages, Math.max(1, requestedPage));
+  const offset = (page - 1) * SELECTION_PAGE_SIZE;
+  return { ids: matches.slice(offset, offset + SELECTION_PAGE_SIZE), total: matches.length, page, pages,
+    start: matches.length ? offset + 1 : 0, end: Math.min(offset + SELECTION_PAGE_SIZE, matches.length) };
+}
 
 export function restoreDraft(value: unknown, saved: Configuration): Draft | null {
   try {
@@ -32,8 +47,13 @@ export function restoreDraft(value: unknown, saved: Configuration): Draft | null
     const existing = draft.listingPolicy ?? defaultListingPolicy();
     const policy = listingPolicy({ ...existing, mode: "KEEP" }, selected);
     if (existing.mode !== "KEEP" && existing.mode !== "UPDATE") return null;
+    const selectionSearch = draft.selectionSearch ?? "";
+    const selectionPage = draft.selectionPage ?? 1;
+    if (typeof selectionSearch !== "string" || selectionSearch.length > 100 ||
+        !Number.isSafeInteger(selectionPage) || selectionPage < 1) return null;
     return { selected, markup: draft.markup, markups: draft.markups, baseline: draft.baseline, products,
       listingPolicy: { ...policy, mode: existing.mode },
+      selectionSearch, selectionPage,
       browse: browse.toString(), active: draft.active === true, publish: draft.active === true && draft.publish === true };
   } catch { return null; }
 }

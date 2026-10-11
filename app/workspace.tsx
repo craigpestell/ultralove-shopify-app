@@ -11,6 +11,7 @@ const Context = createContext<Workspace | null>(null);
 export function WorkspaceProvider({ shop, saved, children }: { shop: string; saved: Configuration; children: ReactNode }) {
   const [draft, setDraft] = useState<Draft>(() => ({
     ...saved, baseline: signature(saved), products: {}, browse: "", active: false, publish: false, listingPolicy: defaultListingPolicy(),
+    selectionSearch: "", selectionPage: 1,
   }));
   const [hydrated, setHydrated] = useState(false);
   const [storageAvailable, setStorageAvailable] = useState(true);

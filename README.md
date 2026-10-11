@@ -29,7 +29,23 @@ by task. The catalog heading is **UltraLove's catalog** and numeric availability
 is shown as **N units**, representing UltraLove stock rather than Shopify inventory.
 Variant, unmanaged, unknown/shared and out-of-stock labels remain distinct.
 Catalog rows pair wholesale prices with retail estimates; the selection
-view manages named products across pages, default markup and individual overrides.
+view shows 25 products per page, with case-insensitive search across the full
+selection by decoded product name, SKU or supplier ID. Search, page and individual
+markup edits survive navigation and tab reloads. Clear search never removes
+products; save/preview, default-markup reset and **Remove all selected** apply to
+the entire selection, not just visible matches.
+Fresh sessions progressively load missing public product details in batches of
+at most 50 through the authenticated, no-store `/app/selection-details` resource.
+Loading and failures explicitly explain incomplete name/SKU search; supplier-ID
+search and pricing edits remain available, and **Retry details** resumes loading
+without discarding the draft. Details failures never count as successful imports.
+The restricted supplier proxy's existing `selection` operation now returns public
+parent summaries alongside its unchanged ID list. Deploy the matching
+`ops/catalog-proxy.php` to the dev supplier's existing
+`/usr/local/libexec/ultralove-catalog-proxy.php` before the app release, retaining
+its forced-command/key restrictions and backing up the previous proxy. An older
+proxy response is rejected explicitly; this requires no WordPress plugin, feed
+permission, Shopify scope or database-schema change.
 Review shows the immutable exact-variant CAD snapshot before explicit confirmation.
 Imports provides progress, product-level results and safe retry; inventory exposes
 stock-only opt-in controls with searchable, readable sync states.

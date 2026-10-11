@@ -5,10 +5,11 @@ const state = `
 import { retailPrice } from "/app/pricing-policy.ts";
 import { defaultListingPolicy } from "/app/listing-policy.ts";
 export const shop = "ultralove-integration-lab.myshopify.com";
-export let saved = {selected:[100], markup:"25.00", markups:{}};
+export let saved = {selected:${JSON.stringify(process.env.UX_FIXTURE_LARGE_SELECTION ? Array.from({length: 300}, (_, index) => (index + 1) * 100) : [100])}, markup:"25.00", markups:{}};
+export const detailsControl = {fail:false,calls:[]};
 export const jobs = [];
 export function save(input) { saved = {...saved, selected:JSON.parse(input.productIds), markup:input.markup, markups:JSON.parse(input.markups)}; }
-export const products = Array.from({length:55},(_,index)=>(index+1)*100).map(id=>({id,name:({"100":"Amber travel case","200":"Rose wellness kit","300":"Satin gift set"})[id]||"Fixture product "+id,type:id===300?"variable":"simple",sku:"SKU-"+id,price:"12.50",currency:"CAD",images:[],manage_stock:true,stock_owner_id:id,stock_quantity:10}));
+export const products = Array.from({length:${process.env.UX_FIXTURE_LARGE_SELECTION ? 300 : 55}},(_,index)=>(index+1)*100).map(id=>({id,name:({"100":"Amber travel case","200":"Rose wellness kit","300":"Satin gift set"})[id]||"Fixture product "+id,type:id===300?"variable":"simple",sku:"SKU-"+id,price:"12.50",currency:"CAD",images:[],manage_stock:true,stock_owner_id:id,stock_quantity:10}));
 export const inventory = [100,200].map(supplierId=>({supplierId,name:products.find(p=>p.id===supplierId).name,sku:"SKU-"+supplierId,productId:"gid://shopify/Product/"+supplierId,enabled:supplierId===100,status:supplierId===100?"SYNCED":"NOT_ENROLLED",variantCount:1,error:null,lastSuccessAt:supplierId===100?new Date().toISOString():null,nextRunAt:null}));
 export function screen(id) {
   const job = jobs.find(job=>job.id===id)||null;
@@ -67,12 +68,13 @@ const server = await createServer({
         import {createRoot} from "react-dom/client";
         import {createBrowserRouter,RouterProvider,Outlet,useLoaderData} from "react-router";
         import Index,{loader,action} from "/app/routes/app._index.tsx";
+        import {loader as detailsLoader} from "/app/routes/app.selection-details.ts";
         import Inventory,{loader as inventoryLoader,action as inventoryAction} from "/app/routes/app.inventory.tsx";
         import {WorkspaceProvider} from "/app/workspace.tsx";
         import {saved,shop} from "virtual:ux-state";
         import "/app/catalog.css";
         function Workspace(){const data=useLoaderData();return React.createElement(WorkspaceProvider,{shop,saved:data.saved},React.createElement(Outlet));}
-        createRoot(document.getElementById("root")).render(React.createElement(RouterProvider,{router:createBrowserRouter([{path:"/app",Component:Workspace,loader:async()=>({saved}),children:[{index:true,Component:Index,loader,action},{path:"inventory",Component:Inventory,loader:inventoryLoader,action:inventoryAction}]}])}));`;
+        createRoot(document.getElementById("root")).render(React.createElement(RouterProvider,{router:createBrowserRouter([{path:"/app",Component:Workspace,loader:async()=>({saved}),children:[{index:true,Component:Index,loader,action},{path:"selection-details",loader:detailsLoader},{path:"inventory",Component:Inventory,loader:inventoryLoader,action:inventoryAction}]}])}));`;
       if (id.endsWith("/app/shopify.server.ts")) return `import {shop} from "virtual:ux-state";export const authenticateLabAdmin=async()=>({session:{shop},admin:{graphql:async()=>{throw new Error("Live Shopify API disabled in fixture");}}});`;
       if (id.endsWith("/app/db.server.ts")) return `import {save} from "virtual:ux-state";export default {catalogSelection:{upsert:async input=>save(input.update)}};`;
       if (id.endsWith("/app/imports.server.ts")) return `import {screen,preview,queue} from "virtual:ux-state";
@@ -85,8 +87,9 @@ const server = await createServer({
         export const inventoryScreen=async()=>inventory;
         export async function inventoryControl(shop,id,intent,admin,confirm){const product=inventory.find(p=>p.supplierId===id);if(!product)throw new Error("Unknown product");
           if(intent==="enable"&&confirm!=="inventory-only")throw new Error("Confirmation required");product.enabled=intent!=="pause";product.status=intent==="pause"?"PAUSED":"QUEUED";}`;
-      if (id.endsWith("/app/catalog.server.ts")) return `import {products} from "virtual:ux-state";
+      if (id.endsWith("/app/catalog.server.ts")) return `import {products,detailsControl} from "virtual:ux-state";
         export class CatalogError extends Error {}
+        export async function selectedProducts(ids){detailsControl.calls.push(ids);await new Promise(resolve=>setTimeout(resolve,50));if(detailsControl.fail)throw new CatalogError("Fixture supplier details unavailable");return products.filter(p=>ids.includes(p.id)).map(({id,name,sku,price,type})=>({id,name,sku,price,type}));}
         export async function validateSelection(){}
         export async function productsPage(filters){let rows=products.filter(p=>!filters.search||p.name.includes(filters.search));if(filters.after_id)rows=rows.filter(p=>p.id>filters.after_id);const page=rows.slice(0,50);return {products:page,has_more:rows.length>50,next_after_id:page.at(-1)?.id??filters.after_id??0};}
         export async function categoriesPage(){return {categories:[{id:1,name:"Fixture category"}],has_more:false};}`;

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { CATALOG_BATCH_SIZE, selectionIds } from "./catalog-policy.ts";
+import type { ProductSummary } from "./workspace-policy";
 
 export class CatalogError extends Error {
   readonly retryAfter: number | null;
@@ -132,6 +133,29 @@ export async function validateSelection(ids: number[], transport: Transport = ss
       throw new CatalogError("Some selected products are no longer published. Refresh the catalog and revise the selection.");
     }
   }
+}
+
+export async function selectedProducts(ids: number[], transport: Transport = sshTransport): Promise<ProductSummary[]> {
+  const selected = selectionIds(ids);
+  if (!selected.length || selected.length > CATALOG_BATCH_SIZE) throw new CatalogError("Request 1-50 selected product details at a time.");
+  const data = await transport({ operation: "selection", ids: selected });
+  if (!object(data) || !Array.isArray(data.ids) || data.ids.length !== selected.length ||
+      !Array.isArray(data.products) ||
+      data.products.length !== selected.length) {
+    throw new CatalogError("Selected product details are incomplete. Refresh the selection or check the supplier connection.");
+  }
+  const confirmed = data.ids;
+  if (!selected.every((id) => confirmed.includes(id))) throw new CatalogError("Some selected products are no longer published by UltraLove.");
+  const seen = new Set<number>();
+  return data.products.map((product: unknown) => {
+    if (!object(product) || typeof product.id !== "number" || !selected.includes(product.id) || seen.has(product.id) ||
+        typeof product.name !== "string" || typeof product.sku !== "string" || typeof product.type !== "string" ||
+        !(product.price === null || typeof product.price === "string")) {
+      throw new CatalogError("Selected product details contain an invalid product.");
+    }
+    seen.add(product.id);
+    return { id: product.id, name: product.name, sku: product.sku, price: product.price, type: product.type };
+  });
 }
 
 export async function importPlan(ids: number[], location: string, run: string, markup: string, transport: Transport = sshTransport): Promise<unknown> {

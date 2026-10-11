@@ -1,10 +1,11 @@
-import { useEffect, useRef } from "react";
-import { Form, Link, useActionData, useLoaderData, useLocation, useNavigation, useSubmit } from "react-router";
+import { useCallback, useEffect, useRef } from "react";
+import { Form, Link, useActionData, useFetcher, useLoaderData, useLocation, useNavigation, useSubmit } from "react-router";
 import type { action, loader } from "./routes/app._index";
-import { pageSelection, supplierText } from "./catalog-policy";
+import type { loader as detailsLoader } from "./routes/app.selection-details";
+import { CATALOG_BATCH_SIZE, pageSelection, supplierText } from "./catalog-policy";
 import { pricingSignature, retailPrice, selectedOverrides } from "./pricing-policy";
 import { useWorkspace, WorkspaceNav } from "./workspace";
-import { validListingChoices, validPricing, workspaceHref } from "./workspace-policy";
+import { selectedPage, validListingChoices, validPricing, workspaceHref } from "./workspace-policy";
 import ProductImage from "./product-image";
 import ImportOptions from "./import-options";
 import ImportResults from "./import-results";
@@ -35,6 +36,37 @@ export default function CatalogWorkspace() {
   const view = ["catalog", "selection", "review", "imports"].includes(requestedView) ? requestedView : "catalog";
   const heading = useRef<HTMLHeadingElement>(null);
   const previousView = useRef(view);
+  const details = useFetcher<typeof detailsLoader>();
+  const fetchDetails = details.load;
+  const detailsPending = useRef(false);
+  const missingDetails = ids.filter((id) => !draft.products[id]);
+  const selection = selectedPage(ids, draft.products, draft.selectionSearch, draft.selectionPage);
+  const loadDetails = useCallback(() => {
+    const missing = draft.selected.filter((id) => !draft.products[id]).slice(0, CATALOG_BATCH_SIZE);
+    if (!missing.length) return;
+    const query = new URLSearchParams();
+    const context = new URLSearchParams(location.search);
+    for (const key of ["shop", "host", "embedded", "id_token"]) {
+      const value = context.get(key);
+      if (value) query.set(key, value);
+    }
+    query.set("ids", JSON.stringify(missing));
+    detailsPending.current = true;
+    void fetchDetails(`/app/selection-details?${query}`);
+  }, [draft.selected, draft.products, location.search, fetchDetails]);
+  useEffect(() => {
+    if (details.state !== "idle") return;
+    if (detailsPending.current) {
+      const response = details.data;
+      if (!response) return;
+      detailsPending.current = false;
+      if (response.error) return;
+      setDraft((current) => ({ ...current, products: { ...current.products,
+        ...Object.fromEntries(response.products.map((product) => [product.id, product])) } }));
+      return;
+    }
+    if (view === "selection" && !details.data?.error) loadDetails();
+  }, [details.state, details.data, view, loadDetails, setDraft]);
   useEffect(() => {
     setDraft((current) => {
       const known = { ...current.products };
@@ -73,6 +105,7 @@ export default function CatalogWorkspace() {
   const offPage = ids.filter((id) => !pageIds.includes(id));
   const select = (nextIds: number[]) => setDraft((current) => ({
     ...current, selected: nextIds, markups: selectedOverrides(current.markups, nextIds),
+    selectionPage: selectedPage(nextIds, current.products, current.selectionSearch, current.selectionPage).page,
     listingPolicy: { ...current.listingPolicy,
       links: Object.fromEntries(Object.entries(current.listingPolicy.links).filter(([id]) => nextIds.includes(Number(id)))),
       recreate: current.listingPolicy.recreate.filter((id) => nextIds.includes(id)) },
@@ -171,9 +204,28 @@ export default function CatalogWorkspace() {
       {view === "selection" && <div className="selection-layout">
         <section className="workspace-panel selection-list" aria-labelledby="selected-heading">
           <div className="catalog-toolbar"><h2 id="selected-heading">{ids.length} selected products</h2>
-            <s-button disabled={busy || !ids.length} onClick={() => select([])}>Remove all</s-button></div>
+            <s-button disabled={busy || !ids.length} onClick={() => select([])}>Remove all selected</s-button></div>
+          {!!ids.length && <div className="catalog-filters" role="search" aria-label="Search selected products">
+            <label>Search selected products
+              <input type="search" maxLength={100} placeholder="Product name, SKU or ID" value={draft.selectionSearch}
+                onChange={(event) => {
+                  const selectionSearch = event.currentTarget.value;
+                  setDraft((current) => ({ ...current, selectionSearch, selectionPage: 1 }));
+                }} />
+            </label>
+            <s-button disabled={!draft.selectionSearch} onClick={() => setDraft((current) => ({ ...current, selectionSearch: "", selectionPage: 1 }))}>Clear search</s-button>
+          </div>}
+          {!!missingDetails.length && <p role="status">{details.data?.error
+            ? `${missingDetails.length} products still need details. Search currently matches known names/SKUs and all selected IDs.`
+            : `Loading details for ${missingDetails.length} selected products. Name and SKU results may be incomplete until loading finishes.`}</p>}
+          {!!missingDetails.length && details.data?.error && <div role="alert"><s-banner heading="Selected product details unavailable" tone="warning">
+            {details.data.error} Your selections and pricing edits are unchanged.
+            <s-button disabled={details.state !== "idle" || !missingDetails.length} onClick={loadDetails}>Retry details</s-button>
+          </s-banner></div>}
           {!ids.length ? <div className="workspace-empty"><h2>Start with a few products</h2><p>Select products in the catalog, then return here to set pricing.</p><Link to={viewHref("catalog")}>Browse catalog</Link></div> :
-            <ul className="selection-products">{ids.map((id) => {
+            <><p role="status">Showing {selection.start}–{selection.end} of {selection.total} {draft.selectionSearch.trim() ? `matching products (${ids.length} selected in total)` : "selected products"}</p>
+            {!selection.total && <div className="workspace-empty"><h3>No matching selected products</h3><p>Try a different name, SKU or product ID, or clear the search.</p></div>}
+            <ul className="selection-products">{selection.ids.map((id) => {
               const product = draft.products[id];
               const name = product ? supplierText(product.name) : `Supplier product #${id}`;
               return <li key={id}>
@@ -182,7 +234,12 @@ export default function CatalogWorkspace() {
                 {overrideField(id, name)}
                 <button type="button" className="quiet-button" disabled={busy} aria-label={`Remove ${name}`} onClick={() => select(ids.filter((selectedId) => selectedId !== id))}>Remove</button>
               </li>;
-            })}</ul>}
+            })}</ul>
+            <nav className="catalog-pagination" aria-label="Selected products pagination">
+              <s-button disabled={selection.page === 1} onClick={() => setDraft((current) => ({ ...current, selectionPage: selection.page - 1 }))}>Previous</s-button>
+              <span>Page {selection.page} of {selection.pages}</span>
+              <s-button disabled={selection.page === selection.pages} onClick={() => setDraft((current) => ({ ...current, selectionPage: selection.page + 1 }))}>Next</s-button>
+            </nav></>}
           <Link to={viewHref("catalog")}>Add more products</Link>
         </section>
         <aside className="workspace-panel pricing-panel" aria-labelledby="pricing-heading">

@@ -6,7 +6,7 @@ test("workspace restores multi-page drafts, preserves unfinished edits and store
   const server = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true, include: [] },
     server: { middlewareMode: true, watch: null, hmr: false, ws: false }, appType: "custom" });
   try {
-    const { restoreDraft, signature, validPricing, validListingChoices, listingInput, statusLabel, workspaceHref } = await server.ssrLoadModule("/app/workspace-policy.ts");
+    const { restoreDraft, selectedPage, SELECTION_PAGE_SIZE, signature, validPricing, validListingChoices, listingInput, statusLabel, workspaceHref } = await server.ssrLoadModule("/app/workspace-policy.ts");
     const saved = { selected: [100], markup: "25", markups: {} };
     const draft = { ...saved, selected: [100, 200], markup: "30.", markups: { 200: "50.00" },
       baseline: signature(saved), products: { 100: { id: 100, name: "Amber case", sku: "A", price: "12.50", type: "simple" } },
@@ -19,6 +19,28 @@ test("workspace restores multi-page drafts, preserves unfinished edits and store
     assert.equal(restored.browse, "search=Amber&after_id=100");
     assert.equal(restored.publish, false);
     assert.equal(restored.listingPolicy.mode, "KEEP", "old browser drafts default to keeping existing listings");
+    assert.equal(restored.selectionSearch, "");
+    assert.equal(restored.selectionPage, 1);
+    assert.equal(restoreDraft({ ...draft, selectionSearch: "Amber", selectionPage: 3 }, saved).selectionPage, 3);
+    for (const selectionPage of [0, -1, 1.5, "2"]) assert.equal(restoreDraft({ ...draft, selectionPage }, saved), null);
+    assert.equal(restoreDraft({ ...draft, selectionSearch: "a".repeat(101) }, saved), null);
+    const ids = Array.from({ length: 303 }, (_, i) => i + 1);
+    const products = { 301: { id: 301, name: "Rose <strong>Kit</strong> &amp; Case", sku: "Special-XYZ", price: "12.50", type: "simple" } };
+    assert.equal(SELECTION_PAGE_SIZE, 25);
+    assert.deepEqual(selectedPage(ids, products, "", 1).ids, ids.slice(0, 25));
+    assert.deepEqual(selectedPage(ids, products, "", 13).ids, [301, 302, 303]);
+    assert.deepEqual(selectedPage(ids.slice(0, 300), products, "", 13).ids, ids.slice(275, 300), "removing the final page clamps to the previous page");
+    assert.equal(selectedPage(ids, products, "", 13).start, 301);
+    assert.equal(selectedPage(ids, products, "", 13).end, 303);
+    for (const search of [" ROSE ", "kit & case", "special-xyz", "#301"]) {
+      const filtered = selectedPage(ids, products, search, 13);
+      assert.deepEqual(filtered.ids, [301], "search finds an off-page product by decoded name, SKU or ID");
+      assert.equal(filtered.page, 1);
+      assert.equal(filtered.total, 1);
+    }
+    assert.equal(selectedPage(ids, products, "302", 1).ids.includes(302), true, "IDs remain searchable without cached details");
+    assert.deepEqual(selectedPage(ids, products, "not found", 13), { ids: [], total: 0, page: 1, pages: 1, start: 0, end: 0 });
+    assert.equal(selectedPage(ids, products, "", 1).total, 303, "clearing a filter retains the complete selection");
     const policy = { mode: "UPDATE", content: false, images: false, prices: true, links: {}, recreate: [] };
     assert.deepEqual(restoreDraft({ ...draft, listingPolicy: policy }, saved).listingPolicy, policy);
     assert.equal(validListingChoices({ ...restored, listingPolicy: policy }), true);

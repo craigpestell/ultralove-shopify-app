@@ -3,7 +3,7 @@ import { test } from "node:test";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { PassThrough } from "node:stream";
-import { CatalogError, inventoryState, productsPage, categoriesPage, validateSelection } from "../app/catalog.server.ts";
+import { CatalogError, inventoryState, productsPage, categoriesPage, selectedProducts, validateSelection } from "../app/catalog.server.ts";
 
 const product = {
   id: 1, parent_id: 0, name: "Supplier product", sku: "SKU-1", type: "simple",
@@ -95,6 +95,28 @@ test("large selections are fully validated in bounded supplier batches", async (
     if (request.ids[0] > 50) throw new CatalogError("Supplier rate limit", 30);
     return { ids: request.ids };
   }), (error) => error instanceof CatalogError && error.retryAfter === 30);
+});
+
+test("selected product summaries use bounded complete read-only selections", async () => {
+  const ids = Array.from({ length: 50 }, (_, index) => index + 1);
+  const summaries = ids.map((id) => ({ id, name: `Name ${id}`, sku: `SKU-${id}`, price: "12.50", type: "simple" }));
+  const result = await selectedProducts(ids, async (request) => {
+    assert.deepEqual(request, { operation: "selection", ids });
+    return { ids: ids.toReversed(), products: summaries.toReversed() };
+  });
+  assert.deepEqual(result, summaries.toReversed());
+  const unavailable = async () => { throw new Error("Invalid input must not reach supplier"); };
+  for (const invalid of [[], [...ids, 51], [1, 1], [-1], ["1"]]) await assert.rejects(selectedProducts(invalid, unavailable));
+  for (const response of [
+    { ids }, { ids: ids.slice(1), products: summaries }, { ids, products: summaries.slice(1) },
+    { ids: [...ids.slice(1), 999], products: summaries },
+    { ids, products: [summaries[0], ...summaries.slice(0, -1)] },
+    { ids, products: [{ ...summaries[0], id: 999 }, ...summaries.slice(1)] },
+    { ids, products: [{ ...summaries[0], name: null }, ...summaries.slice(1)] },
+    { ids, products: [{ ...summaries[0], price: 12.50 }, ...summaries.slice(1)] },
+  ]) await assert.rejects(selectedProducts(ids, async () => response), (error) => error instanceof CatalogError);
+  await assert.rejects(selectedProducts(ids, async () => { throw new CatalogError("Supplier rate limit", 30); }),
+    (error) => error.retryAfter === 30);
 });
 
 test("restricted inventory transport accepts only bounded structured rate-limit failures", async (context) => {

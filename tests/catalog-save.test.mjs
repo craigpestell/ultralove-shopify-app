@@ -39,7 +39,12 @@ test("unified catalog saves validated selections in place and keeps failures on 
           }; }`;
         if (id.endsWith("/app/catalog.server.ts")) return `
           export class CatalogError extends Error {}
-          export const validation = { calls: [], reject: false, browseCalls: 0, browseReject: false };
+          export const validation = { calls: [], reject: false, browseCalls: 0, browseReject: false, detailsCalls: [], detailsReject: false };
+          export async function selectedProducts(ids) {
+            validation.detailsCalls.push(ids);
+            if (validation.detailsReject) throw new CatalogError("Details unavailable");
+            return ids.map(id=>({id,name:"Product "+id,sku:"SKU-"+id,price:"12.50",type:"simple"}));
+          }
           export async function validateSelection(ids) {
             validation.calls.push(ids);
             if (validation.reject) throw new CatalogError("Selection no longer available");
@@ -61,6 +66,28 @@ test("unified catalog saves validated selections in place and keeps failures on 
     const { validation } = await server.ssrLoadModule("/app/catalog.server.ts");
     const { auth } = await server.ssrLoadModule("/app/shopify.server.ts");
     const { imports } = await server.ssrLoadModule("/app/imports.server.ts");
+    const { loader: detailsLoader } = await server.ssrLoadModule("/app/routes/app.selection-details.ts");
+    const detailsRequest = (value) => new Request(`https://app.example/app/selection-details?ids=${encodeURIComponent(value)}`);
+    let details = await detailsLoader({ request: detailsRequest("[2,1]") });
+    assert.deepEqual(details.data.products.map(product => product.id), [1, 2]);
+    assert.equal(details.init.headers["Cache-Control"], "no-store");
+    const detailCalls = validation.detailsCalls.length;
+    for (const invalid of ["", "no JSON", "[]", "[1,1]", '["1"]', JSON.stringify(Array.from({length: 51}, (_, i) => i + 1))]) {
+      details = await detailsLoader({ request: detailsRequest(invalid) });
+      assert.equal(details.init.status, 400);
+      assert.ok(details.data.error);
+    }
+    assert.equal((await detailsLoader({ request: new Request("https://app.example/app/selection-details?ids=[1]&ids=[2]") })).init.status, 400);
+    assert.equal(validation.detailsCalls.length, detailCalls);
+    auth.reject = true;
+    await assert.rejects(detailsLoader({ request: detailsRequest("[1]") }), (error) => error.status === 403);
+    assert.equal(validation.detailsCalls.length, detailCalls, "supplier details are never read before authentication");
+    auth.reject = false;
+    validation.detailsReject = true;
+    details = await detailsLoader({ request: detailsRequest("[1]") });
+    assert.equal(details.init.status, 502);
+    assert.equal(details.data.error, "Details unavailable");
+    validation.detailsReject = false;
     const request = (fields) => new Request("https://app.example/app?category_id=5", {
       method: "POST", body: new URLSearchParams(fields),
     });
@@ -198,12 +225,13 @@ test("unified catalog saves validated selections in place and keeps failures on 
 
     const { WorkspaceProvider } = await server.ssrLoadModule("/app/workspace.tsx");
     let catalogProducts = [];
+    let renderSelected = [1];
     const handler = createStaticHandler([{
       id: "catalog", path: "/app", Component: () => createElement(WorkspaceProvider, {
-        shop, saved: { selected: [1], markup: "25.00", markups: {} },
+        shop, saved: { selected: renderSelected, markup: "25.00", markups: {} },
       }, createElement(Index)),
       loader: async () => ({
-        shop, selected: [1], markup: "25.00", markups: {}, job: null, history: [], filters: { categoryAfter: 0 },
+        shop, selected: renderSelected, markup: "25.00", markups: {}, job: null, history: [], filters: { categoryAfter: 0 },
         products: { products: catalogProducts, next_after_id: 0, has_more: false },
         categories: { categories: [], next_after_id: 0, has_more: false }, error: null,
       }),
@@ -238,6 +266,16 @@ test("unified catalog saves validated selections in place and keeps failures on 
     assert.match(stockedHtml, /Stock varies by variant/);
     assert.match(stockedHtml, /Unmanaged.*needs review/);
     assert.equal((stockedHtml.match(/Unknown\/shared.*?needs review/g) ?? []).length, 2);
+    renderSelected = Array.from({ length: 300 }, (_, i) => i + 1);
+    const selectionContext = await handler.query(new Request("https://app.example/app?view=selection"));
+    const selectionHtml = renderToStaticMarkup(createElement(StaticRouterProvider, {
+      router: createStaticRouter(handler.dataRoutes, selectionContext), context: selectionContext,
+    }));
+    assert.equal((selectionHtml.match(/class="selection-product-name"/g) ?? []).length, 25);
+    assert.match(selectionHtml, /Search selected products/);
+    assert.match(selectionHtml, /Page 1 of 12/);
+    assert.match(selectionHtml, /name="ids" value="\[1,2,3,/, "the configuration form includes the complete selection, not just its first page");
+    assert.match(selectionHtml, /298,299,300\]"/);
   } finally {
     await server.close();
   }
