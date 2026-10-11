@@ -98,27 +98,28 @@ export async function createPreview(shop: string, markup: string, api: GraphQL, 
     if (policy.links[item.supplierId] && existing && existing.id !== target) {
       throw new ImportError("A live supplier identity already exists on another listing. No link or replacement was applied.");
     }
-    if (policy.recreate.includes(item.supplierId)) {
+    if (policy.recreate.includes(item.supplierId) ||
+        (expected && !policy.links[item.supplierId] && (!target || target !== expected))) {
+      listing.targetId = expected;
       if (!expected) block("A replacement requires a previously saved Shopify mapping.");
-      else if (existing || await listingSnapshot(api, expected)) block("The previously mapped Shopify product still exists. Reconnect it; replacement is not authorized.");
+      else if (!claim?.productId || claim.productId !== expected) block("A replacement requires a certain saved creation mapping. Reconcile the previous import or reconnect an existing product.");
+      else if (existing) block("A Shopify listing for this supplier still exists. Reconnect it instead of creating a replacement.");
+      else if (await listingSnapshot(api, expected)) block("The previously linked Shopify product still exists, but its UltraLove connection changed. Reconnect it instead of creating a replacement.");
       else {
         listing.action = "RECREATE";
         listing.targetId = null;
-        listing.message = "Explicit replacement will create a new Shopify product using the reviewed visibility settings.";
+        listing.message = "The previously linked product is confirmed missing. Confirming this review will create a new Shopify product using the reviewed prices and visibility settings. Product and variant IDs will change; previous retailer edits and collection membership are not restored.";
       }
-    } else if (expected && !policy.links[item.supplierId] && (!target || target !== expected)) {
-      block("Previously linked Shopify product could not be found. Reconnect it or explicitly create a replacement.");
-      listing.targetId = expected;
     }
     if (listing.action === "RECREATE" || policy.links[item.supplierId]) {
       if (binding?.enabled || binding?.status === "RUNNING") block("Pause inventory synchronization before reconnecting or replacing this listing.");
       else if (binding?.pending) block("An uncertain inventory correction remains pending. Reconcile it before replacing the inventory binding.");
     }
-    if (listing.action !== "BLOCKED" && target && !policy.recreate.includes(item.supplierId) &&
+    if (!["BLOCKED", "RECREATE"].includes(listing.action) && target &&
         (policy.mode === "UPDATE" || policy.links[item.supplierId])) {
       await checkTargetClaims(shop, item.supplierId, target);
       const snapshot = await listingSnapshot(api, target);
-      if (!snapshot) block("Previously linked Shopify product could not be found. Reconnect it or explicitly create a replacement.");
+      if (!snapshot) block("The Shopify product disappeared while preparing this review. Create a fresh preview to verify a replacement, or reconnect an existing product.");
       else {
         assertLinkOwnership(snapshot, item.supplierId, expected);
         try {
@@ -177,7 +178,7 @@ export async function queueJob(shop: string, id: string, retry: boolean, confirm
     throw new ImportError("Confirm the saved import visibility settings before queueing.");
   }
   if (job.items.some((item) => review(item.listing, item.productId).action === "BLOCKED")) {
-    throw new ImportError("Resolve blocked listings: reconnect or explicitly create a replacement, then review a fresh preview.");
+    throw new ImportError("Resolve blocked listings and create a fresh preview. Verified missing products will be proposed as replacements; existing or uncertain listings require reconnection or reconciliation.");
   }
   if (!retry && Date.now() - job.createdAt.getTime() > MAX_PREVIEW_AGE) throw new ImportError("Pricing preview expired. Create a fresh preview.");
   if (!retry && JSON.stringify(await savedSelection(shop)) !== job.selection) throw new ImportError("Saved selections changed. Create a fresh pricing preview.");

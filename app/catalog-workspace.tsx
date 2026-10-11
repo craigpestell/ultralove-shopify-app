@@ -15,7 +15,7 @@ function stockLabel(product: { type: string; manage_stock: boolean; stock_quanti
   if (product.type === "variable") return "Stock varies by variant";
   if (!product.manage_stock) return "Unmanaged · needs review";
   if (product.stock_quantity === null || product.stock_owner_id !== product.id) return "Unknown/shared · needs review";
-  return product.stock_quantity > 0 ? `${product.stock_quantity} supplier units` : "Out of stock";
+  return product.stock_quantity > 0 ? `${product.stock_quantity} units` : "Out of stock";
 }
 
 export default function CatalogWorkspace() {
@@ -94,7 +94,7 @@ export default function CatalogWorkspace() {
     if (!price || type === "variable") return "Exact prices in preview";
     try { return `$${retailPrice(price, markups[id] ?? markup)}`; } catch { return "Check markup"; }
   };
-  const names = { catalog: "Supplier catalog", selection: "Selection & pricing", review: "Review import", imports: "Imports" };
+  const names = { catalog: "UltraLove's catalog", selection: "Selection & pricing", review: "Review import", imports: "Imports" };
   const save = () => {
     if (!configurationForm.current) return;
     const form = new FormData(configurationForm.current);
@@ -144,9 +144,9 @@ export default function CatalogWorkspace() {
           {categories?.has_more && <Link to={href({ category_after: String(categories.next_after_id) })}>More categories</Link>}</div>
         {/* A focusable region lets keyboard users scroll wide catalog tables. */}
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
-        <div className="catalog-table" tabIndex={0} role="region" aria-label="Supplier catalog">
+        <div className="catalog-table" tabIndex={0} role="region" aria-label="UltraLove's catalog">
           <table>
-            <caption className="visually-hidden">Supplier products with wholesale prices and estimated retail prices in CAD</caption>
+            <caption className="visually-hidden">UltraLove products with wholesale prices and estimated retail prices in CAD. Availability is UltraLove stock, not Shopify inventory.</caption>
             <thead><tr><th scope="col"><span className="checkbox-label"><input type="checkbox" aria-label="Select all on this page" checked={allOnPageSelected}
               ref={(input) => { if (input) input.indeterminate = selectedOnPage > 0 && !allOnPageSelected; }}
               disabled={busy || !pageIds.length}

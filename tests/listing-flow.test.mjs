@@ -45,9 +45,12 @@ test("Prisma listing previews/worker persist approvals, recover missing mappings
     const mock = listingApi();
     let creates = 0;
     let createFailure = null;
+    let listingFailure = null;
     let catalogHidden = false;
     let createdInput;
     const api = async (query, variables) => {
+      if (query === LISTING_QUERY && listingFailure === "transport") throw new Error("Shopify lookup unavailable");
+      if (query === LISTING_QUERY && listingFailure === "graphql") return { errors: [{ message: "Access denied" }] };
       if (query === CONTEXT_QUERY) return { data: {
         shop: { myshopifyDomain: shop, currencyCode: "CAD" },
         locations: { nodes: [{ id: location, name: "Shop location", isActive: true, fulfillsOnlineOrders: true }], pageInfo: { hasNextPage: false } },
@@ -90,7 +93,7 @@ test("Prisma listing previews/worker persist approvals, recover missing mappings
       await db.inventorySync.deleteMany(); await db.importClaim.deleteMany();
       await db.catalogSelection.upsert({ where: { shop }, create: { shop, productIds: "[100]" }, update: { productIds: "[100]" } });
       mock.state.product = product; mock.state.calls = []; mock.state.failAfter = null; mock.state.failBefore = null;
-      mock.state.before = null; createFailure = null; catalogHidden = false;
+      mock.state.before = null; createFailure = null; listingFailure = null; catalogHidden = false;
       if (mapped) await db.importClaim.create({ data: { shop, supplierId: 100, runId: "a".repeat(32),
         productId: "gid://shopify/Product/1", mutationStartedAt: new Date() } });
     };
@@ -174,6 +177,9 @@ test("Prisma listing previews/worker persist approvals, recover missing mappings
     mock.state.product.tags = ["retailer-tag"];
     const lostMarkers = await preview(defaultListingPolicy());
     assert.equal((await importScreen(shop, lostMarkers.id)).job.items[0].listing.action, "BLOCKED");
+    assert.match((await importScreen(shop, lostMarkers.id)).job.items[0].listing.message, /still exists/);
+    await assert.rejects(execute(lostMarkers), /Resolve blocked listings/);
+    assert.equal(mock.state.calls.length, 0, "lost markers never authorize recreation");
     const restoreMarkers = await preview({ ...linkPolicy, links: { "100": "gid://shopify/Product/1" } });
     assert.equal((await execute(restoreMarkers)).items[0].status, "LINKED");
     assert.equal(mock.state.product.title, "Retailer title");
@@ -204,13 +210,21 @@ test("Prisma listing previews/worker persist approvals, recover missing mappings
 
     await reset(null);
     const missing = await preview();
-    const blocked = (await importScreen(shop, missing.id)).job;
-    assert.equal(blocked.items[0].listing.action, "BLOCKED");
-    assert.equal(blocked.items[0].listing.message, "Previously linked Shopify product could not be found. Reconnect it or explicitly create a replacement.");
-    await assert.rejects(queueJob(shop, missing.id, false), /Resolve blocked listings/);
+    const reviewedReplacement = (await importScreen(shop, missing.id)).job;
+    assert.equal(reviewedReplacement.items[0].listing.action, "RECREATE");
+    assert.equal(reviewedReplacement.items[0].productId, null);
+    assert.match(reviewedReplacement.items[0].listing.message, /confirmed missing/);
+    assert.match(reviewedReplacement.items[0].listing.message, /retailer edits and collection membership are not restored/);
+    assert.deepEqual(reviewedReplacement.listingPolicy, defaultListingPolicy(),
+      "automatic replacement needs no extra policy choice or second preview");
+    const beforeConfirmation = creates;
+    assert.equal(mock.state.calls.length, 0, "preview does not mutate Shopify");
+    assert.equal((await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId: 100 } } })).productId,
+      "gid://shopify/Product/1", "preview does not reserve or reset the old claim");
+    await assert.rejects(queueJob(shop, missing.id, false, ""), /Confirm/);
+    assert.equal(creates, beforeConfirmation);
     const replacementPolicy = { ...defaultListingPolicy(), recreate: [100] };
-    const replacement = await preview(replacementPolicy);
-    assert.equal((await importScreen(shop, replacement.id)).job.items[0].listing.action, "RECREATE");
+    const replacement = missing;
     createFailure = "after";
     assert.equal((await execute(replacement)).status, "FAILED");
     const createsAtFailure = creates;
@@ -227,7 +241,7 @@ test("Prisma listing previews/worker persist approvals, recover missing mappings
     assert.equal(work.replacementReserved, true);
 
     await reset(null);
-    const absentReplacement = await preview(replacementPolicy);
+    const absentReplacement = await preview();
     createFailure = "before";
     assert.equal((await execute(absentReplacement)).status, "FAILED");
     const beforeRetry = creates;
@@ -236,23 +250,78 @@ test("Prisma listing previews/worker persist approvals, recover missing mappings
     await runJob(absentReplacement.id, shop, api, () => false);
     assert.equal(creates, beforeRetry);
     assert.match((await importScreen(shop, absentReplacement.id)).job.items[0].error, /previous creation may/);
-    assert.equal((await importScreen(shop, (await preview(replacementPolicy)).id)).job.items[0].listing.action, "BLOCKED",
+    assert.equal((await importScreen(shop, (await preview()).id)).job.items[0].listing.action, "BLOCKED",
       "a fresh replacement preview cannot reset an ambiguous mappingless creation claim");
+
+    for (const failure of ["transport", "graphql"]) {
+      await reset(null);
+      listingFailure = failure;
+      const beforeFailure = creates;
+      await assert.rejects(preview(), failure === "transport" ? /lookup unavailable/ : /listing request failed/);
+      assert.equal(await db.importJob.count(), 0, "failed absence verification cannot persist a replacement preview");
+      assert.equal(mock.state.calls.length, 0);
+      assert.equal(creates, beforeFailure);
+      assert.equal((await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId: 100 } } })).productId,
+        "gid://shopify/Product/1");
+    }
 
     await reset();
     mock.state.product.tags = ["retailer-tag"];
     catalogHidden = true;
+    const hiddenExisting = await preview();
+    assert.equal((await importScreen(shop, hiddenExisting.id)).job.items[0].listing.action, "BLOCKED",
+      "absence from the catalog is not proof that the old product was deleted");
     const existsReplacement = await preview(replacementPolicy);
     assert.equal((await importScreen(shop, existsReplacement.id)).job.items[0].listing.action, "BLOCKED",
       "live old products cannot be recreated just because their catalog markers changed");
+
+    await reset(retailerListing({ id: "gid://shopify/Product/2" }));
+    const movedIdentity = await preview();
+    assert.equal((await importScreen(shop, movedIdentity.id)).job.items[0].listing.action, "BLOCKED");
+    assert.match((await importScreen(shop, movedIdentity.id)).job.items[0].listing.message, /supplier still exists/);
+    await assert.rejects(execute(movedIdentity), /Resolve blocked listings/);
+    assert.equal(mock.state.calls.length, 0);
+
+    await reset(null);
+    const expiredReplacement = await preview();
+    await db.importJob.update({ where: { id: expiredReplacement.id },
+      data: { createdAt: new Date(Date.now() - MAX_PREVIEW_AGE - 1) } });
+    await assert.rejects(execute(expiredReplacement), /expired/);
+    assert.equal(mock.state.calls.length, 0);
+
+    for (const id of ["gid://shopify/Product/1", "gid://shopify/Product/2"]) {
+      await reset(null);
+      const changedReplacement = await preview();
+      mock.state.product = retailerListing({ id });
+      const beforeChanged = creates;
+      assert.equal((await execute(changedReplacement)).status, "FAILED");
+      assert.equal(creates, beforeChanged, "the worker rechecks old-product absence and supplier identity before creation");
+      assert.equal(mock.state.calls.length, 0);
+    }
+
+    await reset(null, false);
+    await db.inventorySync.create({ data: { shop, supplierId: 100, productId: "gid://shopify/Product/1", locationId: location,
+      mappings: "[]", enabled: false } });
+    const bindingOnly = await preview();
+    assert.equal((await importScreen(shop, bindingOnly.id)).job.items[0].listing.action, "BLOCKED");
+    assert.match((await importScreen(shop, bindingOnly.id)).job.items[0].listing.message, /certain saved creation mapping/);
+    await assert.rejects(execute(bindingOnly), /Resolve blocked listings/);
 
     await reset(null);
     await db.inventorySync.create({ data: { shop, supplierId: 100, productId: "gid://shopify/Product/1", locationId: location,
       mappings: '[{"sourceId":100,"variantId":"gid://shopify/ProductVariant/10","inventoryItemId":"gid://shopify/InventoryItem/20"}]',
       enabled: true } });
-    assert.match((await importScreen(shop, (await preview(replacementPolicy)).id)).job.items[0].listing.message, /Pause inventory/);
+    const enrolledReplacement = await preview();
+    assert.match((await importScreen(shop, enrolledReplacement.id)).job.items[0].listing.message, /Pause inventory/);
+    await assert.rejects(execute(enrolledReplacement), /Resolve blocked listings/);
     await db.inventorySync.update({ where: { shop_supplierId: { shop, supplierId: 100 } }, data: { enabled: false } });
-    const pausedReplacement = await preview(replacementPolicy);
+    await db.inventorySync.update({ where: { shop_supplierId: { shop, supplierId: 100 } }, data: { status: "RUNNING" } });
+    assert.match((await importScreen(shop, (await preview()).id)).job.items[0].listing.message, /Pause inventory/);
+    await db.inventorySync.update({ where: { shop_supplierId: { shop, supplierId: 100 } },
+      data: { status: "PAUSED", pending: '{"uncertain":true}' } });
+    assert.match((await importScreen(shop, (await preview()).id)).job.items[0].listing.message, /uncertain inventory correction/);
+    await db.inventorySync.update({ where: { shop_supplierId: { shop, supplierId: 100 } }, data: { pending: null } });
+    const pausedReplacement = await preview();
     assert.equal((await execute(pausedReplacement)).status, "COMPLETE");
     const binding = await db.inventorySync.findUnique({ where: { shop_supplierId: { shop, supplierId: 100 } } });
     assert.equal(binding.enabled, false); assert.equal(binding.status, "PAUSED");
@@ -274,7 +343,7 @@ test("Prisma listing previews/worker persist approvals, recover missing mappings
     assert.equal(mock.state.calls.length, 0);
 
     await reset(null);
-    const concurrent = await preview(replacementPolicy);
+    const concurrent = await preview();
     await db.importClaim.update({ where: { shop_supplierId: { shop, supplierId: 100 } }, data: { runId: "c".repeat(32) } });
     const previousCreates = creates;
     assert.equal((await execute(concurrent)).status, "FAILED");

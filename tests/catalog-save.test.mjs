@@ -197,13 +197,14 @@ test("unified catalog saves validated selections in place and keeps failures on 
     auth.reject = false;
 
     const { WorkspaceProvider } = await server.ssrLoadModule("/app/workspace.tsx");
+    let catalogProducts = [];
     const handler = createStaticHandler([{
       id: "catalog", path: "/app", Component: () => createElement(WorkspaceProvider, {
         shop, saved: { selected: [1], markup: "25.00", markups: {} },
       }, createElement(Index)),
       loader: async () => ({
         shop, selected: [1], markup: "25.00", markups: {}, job: null, history: [], filters: { categoryAfter: 0 },
-        products: { products: [], next_after_id: 0, has_more: false },
+        products: { products: catalogProducts, next_after_id: 0, has_more: false },
         categories: { categories: [], next_after_id: 0, has_more: false }, error: null,
       }),
     }]);
@@ -212,10 +213,31 @@ test("unified catalog saves validated selections in place and keeps failures on 
     const html = renderToStaticMarkup(createElement(StaticRouterProvider, { router, context }));
     assert.match(html, /Save changes/);
     assert.match(html, /Selection &amp; pricing/);
-    assert.match(html, /Supplier catalog/);
+    assert.match(html, /UltraLove&#x27;s catalog/);
+    assert.match(html, /aria-label="UltraLove&#x27;s catalog"/);
     assert.match(html, /1 outside this page/);
     assert.doesNotMatch(html, /href="\/app\/imports/);
     assert.doesNotMatch(html, /name="confirm"/, "confirmation is deliberately staged after pricing");
+    catalogProducts = [
+      { id: 1, stock_quantity: 7 },
+      { id: 2, stock_quantity: 0 },
+      { id: 3, manage_stock: false },
+      { id: 4, type: "variable" },
+      { id: 5, stock_quantity: null },
+      { id: 6, stock_owner_id: 999 },
+    ].map((product) => ({ name: `Product ${product.id}`, sku: `SKU-${product.id}`, images: [], price: "10.00",
+      type: "simple", manage_stock: true, stock_quantity: 10, stock_owner_id: product.id, ...product }));
+    const stockedContext = await handler.query(new Request("https://app.example/app"));
+    const stockedHtml = renderToStaticMarkup(createElement(StaticRouterProvider, {
+      router: createStaticRouter(handler.dataRoutes, stockedContext), context: stockedContext,
+    }));
+    assert.match(stockedHtml, />7 units<\/td>/);
+    assert.doesNotMatch(stockedHtml, /supplier units/);
+    assert.match(stockedHtml, /Availability is UltraLove stock, not Shopify inventory/);
+    assert.match(stockedHtml, /Out of stock/);
+    assert.match(stockedHtml, /Stock varies by variant/);
+    assert.match(stockedHtml, /Unmanaged.*needs review/);
+    assert.equal((stockedHtml.match(/Unknown\/shared.*?needs review/g) ?? []).length, 2);
   } finally {
     await server.close();
   }

@@ -312,7 +312,7 @@ export async function applyListing(options: {
     if (Date.now() - work.capturedAt! > MAX_PREVIEW_AGE) throw new ImportError("Listing snapshot expired. Re-preview before further mutations.");
     await options.beforeOperation?.();
     const snapshot = await listingSnapshot(api, review.targetId!);
-    if (!snapshot) throw new ImportError("Previously linked Shopify product could not be found. Reconnect it or explicitly create a replacement.");
+    if (!snapshot) throw new ImportError("The Shopify product disappeared after this review. Create a fresh preview to verify a replacement, or reconnect an existing product.");
     assertLinkOwnership(snapshot, supplierId, work.expectedProductId);
     assertBaseline(snapshot, work.baseline!, input, policy, supplierId, runId, work);
     if (policy.mode === "UPDATE" && policy.images && snapshot.media.some((image) =>

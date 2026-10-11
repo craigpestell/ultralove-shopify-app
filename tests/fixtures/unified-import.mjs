@@ -22,7 +22,7 @@ export function preview(markup, choices, configuration, policy = defaultListingP
   jobs.unshift({id,status:"PREVIEW",markup,markups,listingPolicy:policy,createdAt:new Date().toISOString(),active:choices.active,publicationId:choices.publish?"gid://shopify/Publication/10":null,
     confirmation:choices.publish?"publish-online-store":choices.active?"active-unpublished":"draft-only",generation:"offline",cursor:1,error:null,
     items:ids.map(supplierId=>{
-      const action=policy.links[supplierId]?"LINK":policy.recreate.includes(supplierId)?"RECREATE":supplierId===200?"BLOCKED":supplierId===100?policy.mode==="UPDATE"?"UPDATE":"KEEP":"CREATE";
+      const action=policy.links[supplierId]?"LINK":policy.recreate.includes(supplierId)||supplierId===200?"RECREATE":supplierId===400?"BLOCKED":supplierId===100?policy.mode==="UPDATE"?"UPDATE":"KEEP":"CREATE";
       const targetId=policy.links[supplierId]||(supplierId===100?"gid://shopify/Product/100":null);
       const changes=[];
       if(policy.mode==="UPDATE"&&["UPDATE","LINK"].includes(action)){
@@ -32,7 +32,7 @@ export function preview(markup, choices, configuration, policy = defaultListingP
       }
       return {supplierId,name:products.find(p=>p.id===supplierId)?.name||"Fixture product "+supplierId,sku:"SKU-"+supplierId,status:"PREVIEW",markup:markups[supplierId]??markup,
       productId:targetId,error:null,attempts:0,wholesale:"12.50 CAD",retail:retailPrice("12.50",markups[supplierId]??markup)+" CAD",variantCount:1,warnings:[],
-      listing:{action,targetId,changes,message:action==="BLOCKED"?"Previously linked Shopify product could not be found. Reconnect it or explicitly create a replacement.":null}};
+      listing:{action,targetId,changes,message:action==="BLOCKED"?"The previously linked Shopify product still exists, but its UltraLove connection changed. Reconnect it instead of creating a replacement.":action==="RECREATE"?"The previously linked product is confirmed missing. Confirming this review will create a replacement using the reviewed prices and visibility settings.":null}};
     })});
   return jobs[0];
 }

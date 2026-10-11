@@ -25,7 +25,10 @@ some rows are selected. Selections accumulate across pages without disabling
 products or page selection at a 50-parent total.
 Bulk selection changes the working selection only. The merchant workspace separates
 **Catalog**, **Selection & pricing**, **Review import**, **Imports**, and **Inventory**
-by task. Catalog rows pair wholesale prices with retail estimates; the selection
+by task. The catalog heading is **UltraLove's catalog** and numeric availability
+is shown as **N units**, representing UltraLove stock rather than Shopify inventory.
+Variant, unmanaged, unknown/shared and out-of-stock labels remain distinct.
+Catalog rows pair wholesale prices with retail estimates; the selection
 view manages named products across pages, default markup and individual overrides.
 Review shows the immutable exact-variant CAD snapshot before explicit confirmation.
 Imports provides progress, product-level results and safe retry; inventory exposes
@@ -157,14 +160,25 @@ identity before creating a new review. Connecting only authorizes the selected
 fields; **Keep unchanged** connects ownership without refreshing product content
 or retail prices.
 
-A previously linked product that cannot be found blocks confirmation rather
-than being automatically recreated. Reconnect it, or explicitly choose **Create
-a replacement if the previous Shopify product no longer exists**. Validation
-creates a fresh review, using the snapshot's products and pricing choices and
-replacing the working selection. Import confirmation is still required. Pause
-inventory sync for the old connection before recovery. A missing ownership
-marker is not proof of deletion, and an uncertain previous creation never
-authorizes a blind replacement.
+A previously linked product that is verified missing is automatically proposed
+as **Create replacement** in the import review. No separate replacement checkbox
+or recovery preview is required. The normal review confirmation authorizes a new
+product with the snapshot's prices and new-product visibility. Product and
+variant IDs change; previous retailer edits and collection membership are not
+restored. Nothing is created while preparing the preview.
+
+Replacement requires a certain saved creation mapping, a successful direct
+lookup confirming the old product is absent, and no existing supplier identity
+on another listing. The worker rechecks those conditions before creation.
+Missing ownership markers, lookup failures, uncertain creations and live
+conflicting listings do not authorize replacement. These require reconnection
+or reconciliation. Enabled/running inventory sync or pending corrections still
+block replacement; pause and reconcile before creating a fresh review. A
+verified paused binding is rebound to the replacement and remains paused.
+Connecting an existing product instead creates a fresh review using the
+snapshot's products and pricing choices, replacing the working selection.
+Previously saved previews retain their original actions; create a fresh preview
+to use the automatic replacement default.
 
 New copies initially become unpublished drafts at the verified merchant **Shop location** in
 the CAD lab store. Unsafe/unknown/shared stock stays zero with review warnings,

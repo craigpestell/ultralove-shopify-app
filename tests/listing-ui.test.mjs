@@ -41,9 +41,24 @@ test("listing review shows selected updates, immutable differences and actionabl
       listing: { action: "BLOCKED", targetId: null, changes: [], message: "Previously linked Shopify product could not be found." } }] });
     assert.match(blocked, /Resolve product connections/);
     assert.match(blocked, /name="link-100"/);
-    assert.match(blocked, /name="recreate-100"/);
+    assert.doesNotMatch(blocked, /name="recreate-100"/);
     assert.match(blocked, /Validate connections and create fresh review/);
     assert.match(blocked, /<input(?=[^>]*name="confirm")(?=[^>]*disabled="")[^>]*>/);
+    const replacement = await render({ ...job, listingPolicy: defaultListingPolicy(),
+      items: [{ ...job.items[0], productId: null, listing: { action: "RECREATE", targetId: null,
+        changes: [], message: "The previously linked product is confirmed missing." } }] }, defaultListingPolicy());
+    assert.match(replacement, /Create replacement/);
+    assert.match(replacement, /Review replacements/);
+    assert.match(replacement, /new product and variant IDs/);
+    assert.match(replacement, /This confirmation also authorizes the 1 reviewed replacement/);
+    assert.match(replacement, /<input(?=[^>]*name="confirm")(?![^>]*disabled)[^>]*>/,
+      "automatic replacements can be confirmed without a second recovery preview");
+    assert.doesNotMatch(replacement, /name="recreate-100"/);
+    assert.match(replacement, /Show only products needing review \(1\)/);
+    const completedReplacement = await render({ ...job, status: "COMPLETE", listingPolicy: defaultListingPolicy(),
+      items: [{ ...job.items[0], status: "CREATED",
+        listing: { action: "RECREATE", targetId: null, changes: [], message: null } }] }, defaultListingPolicy());
+    assert.doesNotMatch(completedReplacement, /Show only products needing review/);
     const changed = await render(job, defaultListingPolicy());
     assert.match(changed, /Your selection, pricing, or import choices have changed/);
     assert.match(changed, /<input(?=[^>]*name="confirm")(?=[^>]*disabled="")[^>]*>/);

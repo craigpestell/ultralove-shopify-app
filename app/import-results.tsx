@@ -41,9 +41,12 @@ export default function ImportResults({ job, history, ids, markup, markups, list
     fieldsSignature(listingPolicy) !== fieldsSignature(job.listingPolicy) ||
     activeChoice !== job.active || publishChoice !== Boolean(job.publicationId));
   const blocked = job?.items.some((item) => item.listing.action === "BLOCKED") ?? false;
+  const replacements = job?.items.filter((item) => item.listing.action === "RECREATE").length ?? 0;
   const completed = job?.items.filter((item) => ["CREATED", "REUSED", "UPDATED", "LINKED"].includes(item.status)).length ?? 0;
-  const attention = job?.items.filter((item) => item.error || item.warnings.length || item.listing.action === "BLOCKED").length ?? 0;
-  const items = job?.items.filter((item) => !attentionOnly || !attention || item.error || item.warnings.length || item.listing.action === "BLOCKED") ?? [];
+  const attention = job?.items.filter((item) => item.error || item.warnings.length || item.listing.action === "BLOCKED" ||
+    (job.status === "PREVIEW" && item.listing.action === "RECREATE")).length ?? 0;
+  const items = job?.items.filter((item) => !attentionOnly || !attention || item.error || item.warnings.length || item.listing.action === "BLOCKED" ||
+    (job.status === "PREVIEW" && item.listing.action === "RECREATE")) ?? [];
 
   return <div className="imports-layout">
     {job ? <section className="workspace-panel" aria-labelledby="job-heading">
@@ -64,6 +67,9 @@ export default function ImportResults({ job, history, ids, markup, markups, list
       {job.status === "COMPLETE" && <s-banner heading="Import completed" tone="success">
         Review each product below. Inventory sync remains opt-in. <Link to={inventoryHref}>Manage inventory</Link> or <Link to={catalogHref}>select more products</Link>.
       </s-banner>}
+      {job.status === "PREVIEW" && replacements > 0 && <s-banner heading="Review replacements" tone="warning">
+        {replacements} previously linked product{replacements === 1 ? " is" : "s are"} confirmed missing. Confirmation will create replacements with new product and variant IDs, using this snapshot&apos;s prices and new-product visibility. Previous retailer edits and collection membership are not restored.
+      </s-banner>}
       {active && <p>Processing in the background. Results refresh automatically; you can leave this view without stopping the import.</p>}
       {attention > 0 && <label className="checkbox-label"><span><input type="checkbox" checked={attentionOnly} onChange={(event) => setAttentionOnly(event.currentTarget.checked)} /> Show only products needing review ({attention})</span></label>}
       {/* A focusable region lets keyboard users scroll exact pricing and results. */}
@@ -79,7 +85,7 @@ export default function ImportResults({ job, history, ids, markup, markups, list
             <td><span className="status-badge">{job.status === "PREVIEW" ? ({
               CREATE: "Ready for import", KEEP: "Existing listing kept", UPDATE: "Update selected fields",
               LINK: job.listingPolicy.mode === "UPDATE" ? "Connect and update" : "Connect existing listing",
-              RECREATE: "Replacement approved for review", BLOCKED: "Connection needs attention",
+              RECREATE: "Create replacement", BLOCKED: "Connection needs attention",
             })[item.listing.action] : statusLabel(item.status)}</span>
               {item.productId && <small><a href={`https://admin.shopify.com/store/ultralove-integration-lab/products/${item.productId.split("/").at(-1)}`} target="_blank" rel="noreferrer">Open in Shopify (new tab)</a></small>}
               {item.warnings.length > 0 && <details><summary>Review {item.warnings.length} warning(s)</summary><ul>{item.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></details>}
@@ -97,13 +103,14 @@ export default function ImportResults({ job, history, ids, markup, markups, list
       </div>
       {!items.length && attentionOnly && <p>No products need review in this job. Clear the filter to see all results.</p>}
       {(job.status === "PREVIEW" || job.status === "FAILED") && <ListingRecovery key={job.id} job={job} busy={busy} onPreview={onRecoveryPreview} />}
-      {blocked && <s-banner heading="Resolve product connections before importing" tone="warning">Connect an existing listing or explicitly request a replacement below. Nothing will be automatically recreated.</s-banner>}
+      {blocked && <s-banner heading="Resolve product connections before importing" tone="warning">Reconnect existing listings or pause and reconcile inventory as indicated below, then create a fresh review. Verified missing products are proposed as replacements; nothing changes before confirmation.</s-banner>}
       {(job.status === "PREVIEW" || job.status === "FAILED") && <Form key={`${job.id}:${job.status}`} method="post" className="catalog-confirmation selection-bar">
         <input type="hidden" name="intent" value={job.status === "FAILED" ? "retry" : "queue"} />
         <input type="hidden" name="job" value={job.id} />
         <div><label className="checkbox-label"><span><input name="confirm" type="checkbox" value={job.confirmation} required disabled={busy || expired || changed || blocked} /> I confirm these products, CAD prices, connections, and reviewed changes.
           {job.publicationId ? " Activate and publish new products to Online Store." : job.active ? " Activate new products without publication." : " Create any new products as unpublished drafts."}
           {" "}{job.listingPolicy.mode === "UPDATE" ? "Apply only the selected updates to existing listings; preserve their publication and inventory." : "Keep existing product content and prices unchanged."}</span></label>
+          {replacements > 0 && <small>This confirmation also authorizes the {replacements} reviewed replacement{replacements === 1 ? "" : "s"}.</small>}
           {job.status === "FAILED" && <small>Retries reconcile unfinished items only, using this snapshot. Uncertain creations require review, never blind recreation.</small>}</div>
         <s-button type="submit" variant="primary" disabled={busy || expired || changed || blocked} loading={busy}>
           {job.status === "FAILED" ? "Retry unfinished items" : job.items.some((item) => ["UPDATE", "LINK", "RECREATE"].includes(item.listing.action)) ?
