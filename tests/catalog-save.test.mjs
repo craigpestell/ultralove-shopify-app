@@ -119,6 +119,35 @@ test("unified catalog saves validated selections in place and keeps failures on 
     assert.equal(preview.headers.get("Location"), `/app?category_id=5&job=${"a".repeat(32)}&view=review`);
     assert.deepEqual(imports.previews.at(-1)[4], { ids: [1, 2], markups: { 2: "50.50" } });
     assert.deepEqual(imports.previews.at(-1)[3], { active: false, publish: false });
+    const listingPolicy = { mode: "UPDATE", content: true, images: false, prices: true,
+      links: { 1: "https://admin.shopify.com/store/ultralove-integration-lab/products/123" }, recreate: [2] };
+    const updatePreview = await action({ request: request([
+      ...configuration.map(([key, value]) => [key, key === "intent" ? "preview" : value]),
+      ["listing-policy", JSON.stringify(listingPolicy)],
+    ]) });
+    assert.equal(updatePreview.status, 302);
+    assert.deepEqual(imports.previews.at(-1)[5], { ...listingPolicy, links: { 1: "gid://shopify/Product/123" } });
+    const policyPreviewCount = imports.previews.length;
+    for (const policy of [
+      "bad", JSON.stringify({ ...listingPolicy, mode: "wrong" }),
+      JSON.stringify({ ...listingPolicy, content: false, prices: false }),
+      JSON.stringify({ ...listingPolicy, links: { 3: "123" } }),
+      JSON.stringify({ ...listingPolicy, links: { 1: "https://evil.example/products/123" } }),
+      JSON.stringify({ ...listingPolicy, recreate: [1] }),
+    ]) {
+      const rejected = await action({ request: request([
+        ...configuration.map(([key, value]) => [key, key === "intent" ? "preview" : value]),
+        ["listing-policy", policy],
+      ]) });
+      assert.equal(rejected.init.status, 400);
+      assert.ok(rejected.data.error);
+      assert.equal(imports.previews.length, policyPreviewCount);
+    }
+    const duplicatedPolicy = await action({ request: request([
+      ...configuration.map(([key, value]) => [key, key === "intent" ? "preview" : value]),
+      ["listing-policy", JSON.stringify(listingPolicy)], ["listing-policy", JSON.stringify(listingPolicy)],
+    ]) });
+    assert.equal(duplicatedPolicy.init.status, 400);
     const largeOverrides = Object.fromEntries(largeIds.map((id) => [id, "25.5"]));
     const largeConfiguration = [["intent", "preview"], ["ids", JSON.stringify(largeIds)],
       ["markup", "10"], ["markups", JSON.stringify(largeOverrides)]];

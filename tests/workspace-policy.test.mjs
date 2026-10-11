@@ -6,7 +6,7 @@ test("workspace restores multi-page drafts, preserves unfinished edits and store
   const server = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true, include: [] },
     server: { middlewareMode: true, watch: null, hmr: false, ws: false }, appType: "custom" });
   try {
-    const { restoreDraft, signature, validPricing, statusLabel, workspaceHref } = await server.ssrLoadModule("/app/workspace-policy.ts");
+    const { restoreDraft, signature, validPricing, validListingChoices, listingInput, statusLabel, workspaceHref } = await server.ssrLoadModule("/app/workspace-policy.ts");
     const saved = { selected: [100], markup: "25", markups: {} };
     const draft = { ...saved, selected: [100, 200], markup: "30.", markups: { 200: "50.00" },
       baseline: signature(saved), products: { 100: { id: 100, name: "Amber case", sku: "A", price: "12.50", type: "simple" } },
@@ -18,6 +18,13 @@ test("workspace restores multi-page drafts, preserves unfinished edits and store
     assert.deepEqual(restored.markups, { 200: "50.00" });
     assert.equal(restored.browse, "search=Amber&after_id=100");
     assert.equal(restored.publish, false);
+    assert.equal(restored.listingPolicy.mode, "KEEP", "old browser drafts default to keeping existing listings");
+    const policy = { mode: "UPDATE", content: false, images: false, prices: true, links: {}, recreate: [] };
+    assert.deepEqual(restoreDraft({ ...draft, listingPolicy: policy }, saved).listingPolicy, policy);
+    assert.equal(validListingChoices({ ...restored, listingPolicy: policy }), true);
+    assert.equal(validListingChoices({ ...restored, listingPolicy: { ...policy, prices: false } }), false);
+    assert.equal(restoreDraft({ ...draft, listingPolicy: { ...policy, mode: "invalid" } }, saved), null);
+    assert.deepEqual(listingInput({ ...policy, links: { 100: "123" } }, [100]).links, { 100: "gid://shopify/Product/123" });
     assert.equal(validPricing(restored), false);
     assert.equal(validPricing({ ...restored, markup: "30.00" }), true);
     for (const markup of ["-1", "1001", "2.345", "1e2"]) assert.equal(validPricing({ ...restored, markup }), false);
@@ -27,6 +34,8 @@ test("workspace restores multi-page drafts, preserves unfinished edits and store
     assert.equal(restoreDraft(null, saved), null);
     assert.equal(statusLabel("NOT_ENROLLED"), "Sync off");
     assert.equal(statusLabel("REUSED"), "Existing listing kept");
+    assert.equal(statusLabel("UPDATED"), "Updated from UltraLove");
+    assert.equal(statusLabel("LINKED"), "Existing listing connected");
     const inventory = workspaceHref("?host=embedded&shop=lab&search=old&job=old", "inventory", restored.browse);
     assert.equal(inventory, "/app/inventory?host=embedded&shop=lab&view=inventory");
     assert.equal(workspaceHref("?host=embedded&shop=lab", "catalog", restored.browse),

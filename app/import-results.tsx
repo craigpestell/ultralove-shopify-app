@@ -6,33 +6,44 @@ import { supplierText } from "./catalog-policy";
 import { pricingSignature } from "./pricing-policy";
 import type { MarkupOverrides } from "./pricing-policy";
 import { statusLabel } from "./workspace-policy";
+import { listingSignature } from "./listing-policy";
+import type { ListingPolicy } from "./listing-policy";
+import ListingRecovery from "./listing-recovery";
 
 type Screen = Awaited<ReturnType<typeof importScreen>>;
 const timestamp = (value: string) => new Date(value).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" });
 
-export default function ImportResults({ job, history, ids, markup, markups, busy, jobHref, mode, selectionHref, catalogHref, inventoryHref }:
+export default function ImportResults({ job, history, ids, markup, markups, listingPolicy, activeChoice, publishChoice, busy, jobHref, mode, selectionHref, catalogHref, inventoryHref, onRecoveryPreview = () => {} }:
   Pick<Screen, "job" | "history"> & {
     ids: number[]; markup: string; markups: MarkupOverrides; busy: boolean; jobHref: (id: string) => string;
     mode: string; selectionHref: string; catalogHref: string; inventoryHref: string;
+    listingPolicy: ListingPolicy; activeChoice: boolean; publishChoice: boolean;
+    onRecoveryPreview?: () => void;
   }) {
   const revalidator = useRevalidator();
   const [now, setNow] = useState(() => Date.now());
   const [attentionOnly, setAttentionOnly] = useState(false);
   const active = job?.status === "QUEUED" || job?.status === "RUNNING";
+  const freshnessRequired = job?.status === "PREVIEW" || (job?.status === "FAILED" &&
+    job.items.some((item) => item.status === "FAILED" && ["UPDATE", "LINK"].includes(item.listing.action)));
   useEffect(() => {
-    if (!job || (!active && job.status !== "PREVIEW")) return;
+    if (!job || (!active && !freshnessRequired)) return;
     const timer = setInterval(() => {
       setNow(Date.now());
       if (active && revalidator.state === "idle") revalidator.revalidate();
     }, 3000);
     return () => clearInterval(timer);
-  }, [active, job, revalidator]);
-  const expired = job?.status === "PREVIEW" && now - Date.parse(job.createdAt) > MAX_PREVIEW_AGE;
-  const changed = job?.status === "PREVIEW" &&
-    pricingSignature(ids, markup, markups) !== pricingSignature(job.items.map((item) => item.supplierId), job.markup, job.markups);
-  const completed = job?.items.filter((item) => item.status === "CREATED" || item.status === "REUSED").length ?? 0;
-  const attention = job?.items.filter((item) => item.error || item.warnings.length).length ?? 0;
-  const items = job?.items.filter((item) => !attentionOnly || !attention || item.error || item.warnings.length) ?? [];
+  }, [active, freshnessRequired, job, revalidator]);
+  const expired = freshnessRequired && job && now - Date.parse(job.createdAt) > MAX_PREVIEW_AGE;
+  const fieldsSignature = (policy: ListingPolicy) => listingSignature({ ...policy, links: {}, recreate: [] });
+  const changed = job?.status === "PREVIEW" && (
+    pricingSignature(ids, markup, markups) !== pricingSignature(job.items.map((item) => item.supplierId), job.markup, job.markups) ||
+    fieldsSignature(listingPolicy) !== fieldsSignature(job.listingPolicy) ||
+    activeChoice !== job.active || publishChoice !== Boolean(job.publicationId));
+  const blocked = job?.items.some((item) => item.listing.action === "BLOCKED") ?? false;
+  const completed = job?.items.filter((item) => ["CREATED", "REUSED", "UPDATED", "LINKED"].includes(item.status)).length ?? 0;
+  const attention = job?.items.filter((item) => item.error || item.warnings.length || item.listing.action === "BLOCKED").length ?? 0;
+  const items = job?.items.filter((item) => !attentionOnly || !attention || item.error || item.warnings.length || item.listing.action === "BLOCKED") ?? [];
 
   return <div className="imports-layout">
     {job ? <section className="workspace-panel" aria-labelledby="job-heading">
@@ -45,9 +56,9 @@ export default function ImportResults({ job, history, ids, markup, markups, busy
       </div>
       <div className="snapshot-facts"><p><small>New product visibility</small><strong>{job.publicationId ? "Active + Online Store" : job.active ? "Active, not published" : "Unpublished drafts"}</strong></p>
         <p><small>Snapshot default markup</small><strong>{job.markup}%{Object.keys(job.markups).length > 0 ? ` · ${Object.keys(job.markups).length} overrides` : ""}</strong></p>
-        <p><small>Existing listings</small><strong>Reused without changes</strong></p></div>
+        <p><small>Existing listings</small><strong>{job.listingPolicy.mode === "UPDATE" ? "Update selected fields" : "Keep unchanged"}</strong></p></div>
       {(expired || changed) && <s-banner heading="Create a fresh preview" tone="warning">
-        {expired ? "This pricing preview has expired." : "Your selection or markup has changed."} <Link to={selectionHref}>Return to selection & pricing</Link> to create a new snapshot.
+        {expired ? "This pricing preview has expired." : "Your selection, pricing, or import choices have changed."} <Link to={selectionHref}>Return to selection & pricing</Link> to create a new snapshot.
       </s-banner>}
       {job.error && <div role="alert"><s-banner heading="Import needs attention" tone="critical">{job.error}</s-banner></div>}
       {job.status === "COMPLETE" && <s-banner heading="Import completed" tone="success">
@@ -64,28 +75,42 @@ export default function ImportResults({ job, history, ids, markup, markups, busy
           <tbody>{items.map((item) => <tr key={item.supplierId}>
             <td><strong>{supplierText(item.name)}</strong><small>{item.sku || "Review variant SKUs"} · {item.variantCount} variant(s)</small></td>
             <td>{item.markup}%{job.markups[item.supplierId] !== undefined && <small>Product override</small>}</td>
-            <td>{item.wholesale}</td><td><strong>{item.retail}</strong>{item.productId && (job.status === "PREVIEW" || item.status === "REUSED") && <small>Not applied to existing listing</small>}</td>
-            <td><span className="status-badge">{job.status === "PREVIEW" ? item.productId ? "Existing listing kept" : "Ready for import" : statusLabel(item.status)}</span>
+            <td>{item.wholesale}</td><td><strong>{item.retail}</strong>{item.productId && (job.listingPolicy.mode === "KEEP" || !job.listingPolicy.prices) && ["KEEP", "LINK", "UPDATE"].includes(item.listing.action) && <small>Not applied to existing listing</small>}</td>
+            <td><span className="status-badge">{job.status === "PREVIEW" ? ({
+              CREATE: "Ready for import", KEEP: "Existing listing kept", UPDATE: "Update selected fields",
+              LINK: job.listingPolicy.mode === "UPDATE" ? "Connect and update" : "Connect existing listing",
+              RECREATE: "Replacement approved for review", BLOCKED: "Connection needs attention",
+            })[item.listing.action] : statusLabel(item.status)}</span>
               {item.productId && <small><a href={`https://admin.shopify.com/store/ultralove-integration-lab/products/${item.productId.split("/").at(-1)}`} target="_blank" rel="noreferrer">Open in Shopify (new tab)</a></small>}
               {item.warnings.length > 0 && <details><summary>Review {item.warnings.length} warning(s)</summary><ul>{item.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></details>}
               {item.error && <p role="alert">{item.error}</p>}
+              {item.listing.message && <p>{item.listing.message}</p>}
+              {!!item.listing.changes.length && <details><summary>Review {item.listing.changes.length} proposed change(s)</summary>
+                <dl>{item.listing.changes.map((change, index) => <div key={`${change.field}:${index}`}>
+                  <dt><strong>{change.field}</strong></dt><dd><small>Current</small><pre>{change.before || "(empty)"}</pre>
+                    <small>Proposed</small><pre>{change.after || "(empty)"}</pre></dd>
+                </div>)}</dl>
+              </details>}
             </td>
           </tr>)}</tbody>
         </table>
       </div>
       {!items.length && attentionOnly && <p>No products need review in this job. Clear the filter to see all results.</p>}
+      {(job.status === "PREVIEW" || job.status === "FAILED") && <ListingRecovery key={job.id} job={job} busy={busy} onPreview={onRecoveryPreview} />}
+      {blocked && <s-banner heading="Resolve product connections before importing" tone="warning">Connect an existing listing or explicitly request a replacement below. Nothing will be automatically recreated.</s-banner>}
       {(job.status === "PREVIEW" || job.status === "FAILED") && <Form key={`${job.id}:${job.status}`} method="post" className="catalog-confirmation selection-bar">
         <input type="hidden" name="intent" value={job.status === "FAILED" ? "retry" : "queue"} />
         <input type="hidden" name="job" value={job.id} />
-        <div><label className="checkbox-label"><span><input name="confirm" type="checkbox" value={job.confirmation} required disabled={busy || expired || changed} /> I confirm these products and CAD prices.
-          {job.publicationId ? " Activate and publish new products to Online Store." : job.active ? " Activate new products without publication." : " Create unpublished drafts only."}
-          {" "}Keep existing listings unchanged.</span></label>
+        <div><label className="checkbox-label"><span><input name="confirm" type="checkbox" value={job.confirmation} required disabled={busy || expired || changed || blocked} /> I confirm these products, CAD prices, connections, and reviewed changes.
+          {job.publicationId ? " Activate and publish new products to Online Store." : job.active ? " Activate new products without publication." : " Create any new products as unpublished drafts."}
+          {" "}{job.listingPolicy.mode === "UPDATE" ? "Apply only the selected updates to existing listings; preserve their publication and inventory." : "Keep existing product content and prices unchanged."}</span></label>
           {job.status === "FAILED" && <small>Retries reconcile unfinished items only, using this snapshot. Uncertain creations require review, never blind recreation.</small>}</div>
-        <s-button type="submit" variant="primary" disabled={busy || expired || changed} loading={busy}>
-          {job.status === "FAILED" ? "Retry unfinished items" : `Import ${job.items.length} product${job.items.length === 1 ? "" : "s"}`}
+        <s-button type="submit" variant="primary" disabled={busy || expired || changed || blocked} loading={busy}>
+          {job.status === "FAILED" ? "Retry unfinished items" : job.items.some((item) => ["UPDATE", "LINK", "RECREATE"].includes(item.listing.action)) ?
+            "Apply reviewed changes" : `Import ${job.items.length} product${job.items.length === 1 ? "" : "s"}`}
         </s-button>
       </Form>}
-      <details className="job-details"><summary>Job details</summary><p>Reference: {job.id}</p><p>Created {timestamp(job.createdAt)}. Publishing waits for ready images. Pricing and visibility are fixed for this job and apply only to new products.</p></details>
+      <details className="job-details"><summary>Job details</summary><p>Reference: {job.id}</p><p>Created {timestamp(job.createdAt)}. Publishing waits for ready images. Pricing and selected updates are fixed for this job. Visibility choices apply only to new products.</p></details>
     </section> : mode === "review" ? <section className="workspace-panel workspace-empty"><h2>No snapshot to review</h2><p>Choose your products and pricing first. Nothing imports without confirmation.</p><Link className="workspace-primary" to={selectionHref}>Review selection & pricing</Link></section> : null}
     {mode === "imports" && <section className="workspace-panel" aria-labelledby="history-heading">
       <div className="catalog-toolbar"><h2 id="history-heading">Recent activity</h2><span>Latest 10 previews and imports</span></div>

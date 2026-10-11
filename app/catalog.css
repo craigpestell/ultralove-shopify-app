@@ -115,6 +115,9 @@
 .workspace .catalog-confirmation { position: static; box-shadow: none; background: #f7f8f9; }
 .catalog-confirmation > div { flex: 1; }
 .job-details { margin-top: 20px; color: var(--workspace-muted); font-size: 12px; }
+.job-details form { display: grid; gap: 16px; }
+.workspace .catalog-table pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 60ch; font: inherit; }
+.workspace .catalog-table dd { margin: 8px 0 16px; }
 .job-history { list-style: none; margin: 0; padding: 0; }
 .job-history li { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--workspace-border); padding: 16px 10px; gap: 16px; }
 .job-history a { flex: 1; text-decoration: none; color: #303030; }

@@ -10,6 +10,8 @@ import { createPreview, importScreen, queueJob } from "../imports.server";
 import { markupOverrides, PricingError } from "../pricing-policy";
 import type { MarkupOverrides } from "../pricing-policy";
 import CatalogWorkspace from "../catalog-workspace";
+import { ListingPolicyError, defaultListingPolicy } from "../listing-policy";
+import { listingInput } from "../workspace-policy";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticateLabAdmin(request);
@@ -65,6 +67,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (intent !== "preview" && intent !== "save-selection" && intent !== "save-configuration") throw new ImportError("Invalid catalog action.");
     // Keep legacy preview forms usable with saved selections and global-only markup.
     if (intent === "preview" && !form.has("ids")) {
+      if (form.has("listing-policy")) throw new ImportError("Supply selected products when configuring listing updates.");
       const job = await createPreview(session.shop, markupPercent(field("markup")), async (query, variables) => {
         const response = await admin.graphql(query, { variables, tries: 1 });
         return response.json();
@@ -84,10 +87,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
     if (intent === "preview") {
+      let policy = defaultListingPolicy();
+      if (form.has("listing-policy")) {
+        const input = field("listing-policy", Infinity);
+        let value: unknown;
+        try { value = JSON.parse(input); }
+        catch { throw new ListingPolicyError("Invalid existing-product configuration."); }
+        policy = listingInput(value, ids);
+      }
       const job = await createPreview(session.shop, markup!, async (query, variables) => {
         const response = await admin.graphql(query, { variables, tries: 1 });
         return response.json();
-      }, importChoices(form), { ids, markups: markups! });
+      }, importChoices(form), { ids, markups: markups! }, policy);
       return redirect(destination(job.id));
     }
     await validateSelection(ids);
@@ -99,7 +110,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
     return data({ error: null, saved: true });
   } catch (error) {
-    if (!(error instanceof ImportError) && !(error instanceof CatalogError) && !(error instanceof PricingError)) throw error;
+    if (!(error instanceof ImportError) && !(error instanceof CatalogError) && !(error instanceof PricingError) && !(error instanceof ListingPolicyError)) throw error;
     console.warn("Catalog/import request rejected.", error.message);
     return data({ error: error.message, saved: false }, { status: error instanceof CatalogError ? 502 : 400 });
   }

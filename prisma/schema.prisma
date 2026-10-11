@@ -49,6 +49,7 @@ model ImportJob {
   selection  String
   markup     String
   markups    String       @default("{}")
+  listingPolicy String    @default("{\"mode\":\"KEEP\",\"content\":false,\"images\":false,\"prices\":false,\"links\":{},\"recreate\":[]}")
   active     Boolean      @default(false)
   publicationId String?
   locationId String
@@ -69,6 +70,8 @@ model ImportItem {
   sku        String
   wholesale  String
   payload    String
+  listing    String    @default("{}")
+  listingWork String   @default("{}")
   status     String    @default("PENDING")
   productId  String?
   error      String?

@@ -51,7 +51,7 @@ test("published jobs persist opt-in settings and recover an uncertain publicatio
   });
   const { default: db } = await server.ssrLoadModule("/app/db.server.ts");
   try {
-    for (const migration of ["20261009120000_catalog_selection", "20261009130000_import_jobs", "20261009190000_import_visibility", "20261009203000_product_markups"]) {
+    for (const migration of ["20261009120000_catalog_selection", "20261009130000_import_jobs", "20261009190000_import_visibility", "20261009200000_inventory_sync", "20261009203000_product_markups", "20261009220000_listing_policy"]) {
       const sql = await readFile(new URL(`../prisma/migrations/${migration}/migration.sql`, import.meta.url), "utf8");
       for (const statement of sql.split(";").filter((part) => part.trim())) await db.$executeRawUnsafe(statement);
     }

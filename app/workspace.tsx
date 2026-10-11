@@ -3,13 +3,14 @@ import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { Link, useBeforeUnload, useLocation } from "react-router";
 import { restoreDraft, signature, workspaceHref } from "./workspace-policy";
 import type { Configuration, Draft } from "./workspace-policy";
+import { defaultListingPolicy } from "./listing-policy";
 
 type Workspace = { draft: Draft; setDraft: Dispatch<SetStateAction<Draft>>; storageAvailable: boolean };
 const Context = createContext<Workspace | null>(null);
 
 export function WorkspaceProvider({ shop, saved, children }: { shop: string; saved: Configuration; children: ReactNode }) {
   const [draft, setDraft] = useState<Draft>(() => ({
-    ...saved, baseline: signature(saved), products: {}, browse: "", active: false, publish: false,
+    ...saved, baseline: signature(saved), products: {}, browse: "", active: false, publish: false, listingPolicy: defaultListingPolicy(),
   }));
   const [hydrated, setHydrated] = useState(false);
   const [storageAvailable, setStorageAvailable] = useState(true);

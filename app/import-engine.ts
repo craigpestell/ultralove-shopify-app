@@ -76,7 +76,7 @@ export function markupPercent(value: unknown): string {
     throw new ImportError(error.message);
   }
 }
-function cents(value: string): bigint {
+export function cadCents(value: string): bigint {
   if (value.length > 128 || !/^\d+(?:\.\d{1,2})?$/.test(value)) throw new ImportError("Invalid CAD price.");
   const [whole, fraction = ""] = value.split(".");
   return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0"));
@@ -115,7 +115,7 @@ export function payload(value: unknown, supplierId: number, runId: string, locat
       return { ...quantity, locationId: location, name: "available", quantity: Number(quantity.quantity) };
     });
     const price = text(variant.price);
-    cents(price);
+    cadCents(price);
     if ("id" in variant || "id" in inventory || inventory.tracked !== true ||
         variant.inventoryPolicy !== "DENY" || quantities.length !== 1 ||
         (variant.barcode !== undefined && typeof variant.barcode !== "string")) throw new ImportError("Unsafe import variant.");
@@ -303,11 +303,18 @@ export async function remoteCatalog(api: GraphQL): Promise<RemoteProduct[]> {
   }
   throw new ImportError("Shopify catalog exceeds the bounded review limit.");
 }
+export function ownedProduct(product: Pick<RemoteProduct, "handle" | "supplierId" | "tags">, supplierId: number) {
+  const canonical = /^ultralove-catalog-([1-9]\d*)$/.exec(product.handle);
+  return (!canonical || canonical[1] === String(supplierId)) &&
+    (product.handle === `ultralove-catalog-${supplierId}` || product.tags.includes("ultralove-catalog-linked")) &&
+    product.supplierId?.value === String(supplierId) && product.tags.includes("ultralove-catalog-import") &&
+    product.tags.some((tag) => /^ultralove-catalog-run-[a-f0-9]{32}$/.test(tag));
+}
 export function matchProduct(products: RemoteProduct[], supplierId: number): RemoteProduct | null {
   const matches = new Map<string, RemoteProduct>();
   for (const product of products) {
     if (product.handle === `ultralove-catalog-${supplierId}` || product.supplierId?.value === String(supplierId)) {
-      if (product.handle !== `ultralove-catalog-${supplierId}` || product.supplierId?.value !== String(supplierId) ||
+      if (!ownedProduct(product, supplierId) ||
           !product.tags.includes("ultralove-catalog-import") || !product.tags.some((tag) => /^ultralove-catalog-run-[a-f0-9]{32}$/.test(tag))) {
         throw new ImportError(`Supplier identity collision for ${supplierId}; no listing was changed.`);
       }
@@ -338,7 +345,7 @@ export async function verifyDraft(api: GraphQL, input: Payload, productId: strin
       const expected = wanted.get(id);
       const inventory = object(variant.inventoryItem);
       const quantities = list(object(inventory.inventoryLevel).quantities).map(object);
-      if (!expected || seen.has(id) || (variant.sku === null ? "" : text(variant.sku)) !== expected.sku || cents(text(variant.price)) !== cents(expected.price) ||
+      if (!expected || seen.has(id) || (variant.sku === null ? "" : text(variant.sku)) !== expected.sku || cadCents(text(variant.price)) !== cadCents(expected.price) ||
           (variant.barcode || null) !== (expected.barcode || null) || variant.inventoryPolicy !== "DENY" || inventory.tracked !== true ||
           quantities.length !== 1 || quantities[0].name !== "available" || quantities[0].quantity !== expected.inventoryQuantities[0].quantity) {
         throw new ImportError("Created draft failed variant, price, barcode or inventory verification. No repair was applied.");

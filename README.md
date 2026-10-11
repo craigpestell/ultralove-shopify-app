@@ -114,18 +114,56 @@ that job, never to reused listings from prior imports.
 
 Confirm the displayed snapshot and choose **Queue import** within ten
 minutes. The server verifies that saved selections still match the preview.
-The interface requires a fresh preview when working selection or pricing
-differs from its snapshot; editing visibility never changes a saved snapshot.
+The interface requires a fresh preview when working selection, pricing, visibility,
+or existing-product update choices differ from its snapshot.
 Only one job per store can be queued/running. A separate non-root systemd worker
 processes it; public HTTP handlers never execute a root importer.
 Status refreshes automatically and shows per-product results and Shopify links.
 Failed jobs can be retried/reconciled on the same page using their original
 snapshot, not the current working settings.
-Existing canonical app-owned listings are reused without any mutation,
+By default, existing recognized listings are kept without any mutation,
 including their retailer-edited prices, content, inventory and publication state.
 The importer no longer reuses or requires the old `ultralove-dev-*` test fixtures.
-Existing claims pointing to those fixtures still require the operator cutover
-described below; they are not silently reassigned.
+Legacy listing connections require explicit review; they are never silently
+reassigned.
+
+### Updating and connecting existing Shopify products
+
+In **Selection & pricing**, **Existing Shopify products** defaults to **Keep
+unchanged**. Choose **Update from UltraLove** and explicitly select:
+
+- **Product name, description, and vendor**.
+- **Add supplier images**, retaining existing retailer images.
+- **Retail prices using the selected markup**, including individual overrides.
+
+Select at least one update field. These choices stay in the browser draft and
+are frozen with the preview; **Save changes** still saves selection and pricing,
+not an update job. The review shows current and proposed values before separate
+confirmation. Updates preserve product and variant IDs, handles, publication,
+collections, inventory, and unselected fields. Existing variants must be
+unambiguously matched; updates do not blindly replace the variant list.
+Shopify responses are validated, and retail comparisons use exact CAD cents.
+Large variant sets are read with pagination; price mutations contain at most
+250 variants. Updates and links require a fresh snapshot even when retrying.
+The worker checks for intervening retailer edits and ownership changes before
+continuing, and reconciles durably recorded partial operations rather than
+blindly repeating image uploads or creations.
+
+Under **Connect existing products or recover missing listings**, paste a
+Shopify admin product URL, numeric product ID, or Product GID to explicitly
+associate an unlinked product. The server verifies the target and its variant
+identity before creating a new review. Connecting only authorizes the selected
+fields; **Keep unchanged** connects ownership without refreshing product content
+or retail prices.
+
+A previously linked product that cannot be found blocks confirmation rather
+than being automatically recreated. Reconnect it, or explicitly choose **Create
+a replacement if the previous Shopify product no longer exists**. Validation
+creates a fresh review, using the snapshot's products and pricing choices and
+replacing the working selection. Import confirmation is still required. Pause
+inventory sync for the old connection before recovery. A missing ownership
+marker is not proof of deletion, and an uncertain previous creation never
+authorizes a blind replacement.
 
 New copies initially become unpublished drafts at the verified merchant **Shop location** in
 the CAD lab store. Unsafe/unknown/shared stock stays zero with review warnings,
@@ -142,14 +180,16 @@ Importing does not automatically enroll products in ongoing sync or approve
 order forwarding.
 
 The persistent database stores the immutable feed generation/cursor, selection,
-markup, visibility settings, payloads, per-product results and cross-job creation claims. Before the
+markup, visibility settings, listing-update choices, reviewed changes, payloads,
+per-product results and cross-job creation claims. Before the
 only create mutation, the worker records a claim and disables API transport
 retries. **Retry / reconcile failed items** skips completed items and reads
 Shopify to recover a matching owned draft or Active product. An interrupted
 activation is reconciled without recreating the product. Publication is checked
 before retrying, so already-published products are not published again.
-An unresolved uncertain creation or
-removed mapped listing blocks another creation and requires operator review.
+An unresolved uncertain creation blocks another creation and requires manual
+review. Missing linked listings require explicit, reviewed connection or
+replacement recovery.
 The worker resumes interrupted jobs after restart. Do not run the standalone
 operator catalog importer concurrently with these jobs.
 

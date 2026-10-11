@@ -4,10 +4,11 @@ import type { action, loader } from "./routes/app._index";
 import { pageSelection, supplierText } from "./catalog-policy";
 import { pricingSignature, retailPrice, selectedOverrides } from "./pricing-policy";
 import { useWorkspace, WorkspaceNav } from "./workspace";
-import { validPricing, workspaceHref } from "./workspace-policy";
+import { validListingChoices, validPricing, workspaceHref } from "./workspace-policy";
 import ProductImage from "./product-image";
 import ImportOptions from "./import-options";
 import ImportResults from "./import-results";
+import ListingOptions from "./listing-options";
 import "./catalog.css";
 
 function stockLabel(product: { type: string; manage_stock: boolean; stock_quantity: number | null; stock_owner_id: number | null; id: number }) {
@@ -72,6 +73,9 @@ export default function CatalogWorkspace() {
   const offPage = ids.filter((id) => !pageIds.includes(id));
   const select = (nextIds: number[]) => setDraft((current) => ({
     ...current, selected: nextIds, markups: selectedOverrides(current.markups, nextIds),
+    listingPolicy: { ...current.listingPolicy,
+      links: Object.fromEntries(Object.entries(current.listingPolicy.links).filter(([id]) => nextIds.includes(Number(id)))),
+      recreate: current.listingPolicy.recreate.filter((id) => nextIds.includes(id)) },
   }));
   const overrideField = (id: number, name: string) => <label><span>Markup (%)</span>
     <input type="number" min="0" max="1000" step="0.01" inputMode="decimal" autoComplete="off"
@@ -104,7 +108,7 @@ export default function CatalogWorkspace() {
         <div><h1 ref={heading} tabIndex={-1}>{names[view as keyof typeof names]}</h1>
           <p>{view === "catalog" ? "Find products to add to your store. Review pricing before anything is imported." :
             view === "selection" ? "Set your selling prices and remove anything you don't want to import." :
-              view === "review" ? "Confirm a fixed pricing snapshot. Existing listings are always kept unchanged." :
+              view === "review" ? "Review prices and any requested product updates. Nothing changes until you confirm." :
                 "Track imports, review products, or safely retry unfinished items."}</p></div>
         {view === "imports" && <Link className="workspace-primary" to={viewHref("catalog")}>Browse catalog</Link>}
       </header>
@@ -116,6 +120,7 @@ export default function CatalogWorkspace() {
         <input type="hidden" name="ids" value={JSON.stringify(ids)} />
         <input type="hidden" name="markups" value={JSON.stringify(selectedOverrides(markups, ids))} />
         <input type="hidden" name="markup" value={markup} />
+        <input type="hidden" name="listing-policy" value={JSON.stringify(draft.listingPolicy)} />
         {draft.active && <input type="hidden" name="active" value="yes" />}
         {draft.publish && <input type="hidden" name="publish" value="yes" />}
       </Form>}
@@ -195,6 +200,8 @@ export default function CatalogWorkspace() {
           <details><summary>How prices are calculated</summary><p>Retail = supplier price × (1 + markup / 100), rounded to two decimals in CAD. Markup is not margin. Shipping, taxes, fees and FX are not included. The preview verifies exact variant prices.</p></details>
           <ImportOptions disabled={busy} active={draft.active} publish={draft.publish}
             onChange={(active, publish) => setDraft((current) => ({ ...current, active, publish }))} />
+          <ListingOptions disabled={busy} policy={draft.listingPolicy}
+            onChange={(listingPolicy) => setDraft((current) => ({ ...current, listingPolicy }))} />
           <p className="workspace-note">Preview saves this configuration and checks every variant. You confirm separately before importing.</p>
         </aside>
       </div>}
@@ -204,12 +211,14 @@ export default function CatalogWorkspace() {
           <s-button disabled={busy || !dirty} onClick={save} loading={busy && navigation.formData?.get("intent") === "save-configuration"}>Save changes</s-button>
           <details className="selection-reset"><summary>Reset</summary><s-button disabled={busy || !dirty} onClick={() => setDraft((current) => ({ ...current, selected, markup: savedMarkup, markups: savedMarkups }))}>Restore saved selection and markup</s-button></details>
           {view === "catalog" ? <Link className="workspace-primary" to={viewHref("selection")}>Review selection{ids.length ? ` (${ids.length})` : ""}</Link> :
-            <s-button variant="primary" disabled={busy || !ids.length || !validPricing(draft)} loading={busy && navigation.formData?.get("intent") === "preview"}
+            <s-button variant="primary" disabled={busy || !ids.length || !validPricing(draft) || !validListingChoices(draft)} loading={busy && navigation.formData?.get("intent") === "preview"}
               onClick={() => { if (configurationForm.current) submit(new FormData(configurationForm.current), { method: "post" }); }}>Create pricing preview</s-button>}
         </div>
       </div>}
       {(view === "review" || view === "imports") && <ImportResults job={job} history={history} ids={ids} markup={markup} markups={markups} busy={busy}
-        mode={view} jobHref={(id) => viewHref("imports", id)} selectionHref={viewHref("selection")} catalogHref={viewHref("catalog")}
+        listingPolicy={draft.listingPolicy} activeChoice={draft.active} publishChoice={draft.publish} mode={view} jobHref={(id) => viewHref("imports", id)} selectionHref={viewHref("selection")} catalogHref={viewHref("catalog")}
+        onRecoveryPreview={() => { if (job) setDraft((current) => ({ ...current, selected: job.items.map((item) => item.supplierId),
+          markup: job.markup, markups: job.markups, listingPolicy: job.listingPolicy, active: job.active, publish: Boolean(job.publicationId) })); }}
         inventoryHref={viewHref("inventory")} />}
     </div>
   </s-page>;

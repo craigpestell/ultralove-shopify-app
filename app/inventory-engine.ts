@@ -1,4 +1,4 @@
-import { record } from "./import-engine.ts";
+import { ownedProduct, record } from "./import-engine.ts";
 import type { GraphQL } from "./import-engine.ts";
 
 export class InventoryError extends Error {}
@@ -134,7 +134,10 @@ export async function remoteInventory(api: GraphQL, productId: string, parentId:
   let after: string | null = null;
   for (let page = 0; page < 21; page++) {
     const product = object((await request(api, INVENTORY_QUERY, { id: productId, location: locationId, after })).product);
-    if (product.id !== productId || product.handle !== `ultralove-catalog-${parentId}` ||
+    if (product.id !== productId || !ownedProduct({
+          handle: text(product.handle), tags: list(product.tags).map(text),
+          supplierId: product.supplierId === null ? null : { value: text(object(product.supplierId).value) },
+        }, parentId) ||
         object(product.supplierId).value !== String(parentId) ||
         !list(product.tags).includes("ultralove-catalog-import") ||
         !list(product.tags).some((tag) => typeof tag === "string" && /^ultralove-catalog-run-[a-f0-9]{32}$/.test(tag))) {

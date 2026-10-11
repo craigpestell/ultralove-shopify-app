@@ -14,7 +14,7 @@ export async function inventoryScreen(shop: string) {
   assertLabShop(shop);
   const [claims, items, states] = await Promise.all([
     db.importClaim.findMany({ where: { shop, productId: { not: null } }, orderBy: { supplierId: "asc" } }),
-    db.importItem.findMany({ where: { job: { shop }, status: { in: ["CREATED", "REUSED"] }, productId: { not: null } },
+    db.importItem.findMany({ where: { job: { shop }, status: { in: ["CREATED", "REUSED", "UPDATED", "LINKED"] }, productId: { not: null } },
       orderBy: { job: { createdAt: "desc" } }, select: { supplierId: true, productId: true, name: true, sku: true } }),
     db.inventorySync.findMany({ where: { shop } }),
   ]);
@@ -56,7 +56,7 @@ export async function inventoryControl(shop: string, supplierId: number, intent:
   const claim = await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId } } });
   if (!claim?.productId) throw new InventoryError("Import this product through the app before enabling inventory sync.");
   const imported = await db.importItem.findFirst({
-    where: { supplierId, productId: claim.productId, status: { in: ["CREATED", "REUSED"] }, job: { shop } },
+    where: { supplierId, productId: claim.productId, status: { in: ["CREATED", "REUSED", "UPDATED", "LINKED"] }, job: { shop } },
     orderBy: { job: { createdAt: "desc" } }, include: { job: true },
   });
   if (!imported) throw new InventoryError("A verified completed import is required before inventory enrollment.");

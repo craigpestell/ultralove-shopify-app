@@ -3,6 +3,7 @@ import { createServer } from "vite";
 // Offline browser harness: all server imports and Shopify calls are synthetic.
 const state = `
 import { retailPrice } from "/app/pricing-policy.ts";
+import { defaultListingPolicy } from "/app/listing-policy.ts";
 export const shop = "ultralove-integration-lab.myshopify.com";
 export let saved = {selected:[100], markup:"25.00", markups:{}};
 export const jobs = [];
@@ -11,27 +12,39 @@ export const products = Array.from({length:55},(_,index)=>(index+1)*100).map(id=
 export const inventory = [100,200].map(supplierId=>({supplierId,name:products.find(p=>p.id===supplierId).name,sku:"SKU-"+supplierId,productId:"gid://shopify/Product/"+supplierId,enabled:supplierId===100,status:supplierId===100?"SYNCED":"NOT_ENROLLED",variantCount:1,error:null,lastSuccessAt:supplierId===100?new Date().toISOString():null,nextRunAt:null}));
 export function screen(id) {
   const job = jobs.find(job=>job.id===id)||null;
-  return {...saved,job,history:jobs.map(job=>({...job,completed:job.items.filter(item=>item.status==="CREATED").length,total:job.items.length}))};
+  return {...saved,job,history:jobs.map(job=>({...job,completed:job.items.filter(item=>["CREATED","REUSED","UPDATED","LINKED"].includes(item.status)).length,total:job.items.length}))};
 }
-export function preview(markup, choices, configuration) {
+export function preview(markup, choices, configuration, policy = defaultListingPolicy()) {
   const ids = configuration?.ids||saved.selected;
   const markups = configuration?.markups||{};
   saved = {selected:ids,markup,markups};
   const id = String(jobs.length+1).padStart(32,"a");
-  jobs.unshift({id,status:"PREVIEW",markup,markups,createdAt:new Date().toISOString(),active:choices.active,publicationId:choices.publish?"gid://shopify/Publication/10":null,
+  jobs.unshift({id,status:"PREVIEW",markup,markups,listingPolicy:policy,createdAt:new Date().toISOString(),active:choices.active,publicationId:choices.publish?"gid://shopify/Publication/10":null,
     confirmation:choices.publish?"publish-online-store":choices.active?"active-unpublished":"draft-only",generation:"offline",cursor:1,error:null,
-    items:ids.map(supplierId=>({supplierId,name:products.find(p=>p.id===supplierId)?.name||"Fixture product "+supplierId,sku:"SKU-"+supplierId,status:"PREVIEW",markup:markups[supplierId]??markup,
-      productId:null,error:null,attempts:0,wholesale:"12.50 CAD",retail:retailPrice("12.50",markups[supplierId]??markup)+" CAD",variantCount:1,warnings:[]}))});
+    items:ids.map(supplierId=>{
+      const action=policy.links[supplierId]?"LINK":policy.recreate.includes(supplierId)?"RECREATE":supplierId===200?"BLOCKED":supplierId===100?policy.mode==="UPDATE"?"UPDATE":"KEEP":"CREATE";
+      const targetId=policy.links[supplierId]||(supplierId===100?"gid://shopify/Product/100":null);
+      const changes=[];
+      if(policy.mode==="UPDATE"&&["UPDATE","LINK"].includes(action)){
+        if(policy.content)changes.push({field:"Title",before:"Retailer-edited title",after:products.find(p=>p.id===supplierId)?.name||"Supplier title"});
+        if(policy.prices)changes.push({field:"Retail price",before:"19.99 CAD",after:retailPrice("12.50",markups[supplierId]??markup)+" CAD"});
+        if(policy.images)changes.push({field:"Supplier images",before:"1 existing image retained",after:"Add 1 supplier image"});
+      }
+      return {supplierId,name:products.find(p=>p.id===supplierId)?.name||"Fixture product "+supplierId,sku:"SKU-"+supplierId,status:"PREVIEW",markup:markups[supplierId]??markup,
+      productId:targetId,error:null,attempts:0,wholesale:"12.50 CAD",retail:retailPrice("12.50",markups[supplierId]??markup)+" CAD",variantCount:1,warnings:[],
+      listing:{action,targetId,changes,message:action==="BLOCKED"?"Previously linked Shopify product could not be found. Reconnect it or explicitly create a replacement.":null}};
+    })});
   return jobs[0];
 }
 export function queue(id, retry, confirmation) {
   const job=jobs.find(job=>job.id===id);
   if(!job||confirmation!==job.confirmation)throw new Error("Confirm the immutable snapshot");
+  if(job.items.some(item=>item.listing.action==="BLOCKED"))throw new Error("Resolve product connections before importing");
   job.status="QUEUED";
   setTimeout(()=>{
     job.status=retry?"COMPLETE":"FAILED";
     job.error=retry?null:"Simulated offline worker interruption: retry safely reconciles this snapshot.";
-    job.items.forEach(item=>{item.status=retry?"CREATED":"FAILED";item.error=job.error;item.productId=retry?"gid://shopify/Product/"+item.supplierId:null;});
+    job.items.forEach(item=>{item.status=retry?(item.listing.action==="UPDATE"?"UPDATED":item.listing.action==="LINK"?"LINKED":item.listing.action==="KEEP"?"REUSED":"CREATED"):"FAILED";item.error=job.error;item.productId=item.productId||(retry?"gid://shopify/Product/"+item.supplierId:null);});
   },100);
 }
 `;
@@ -66,7 +79,7 @@ const server = await createServer({
         export class ImportError extends Error {}
         export const savedConfiguration=async()=>screen(null);
         export const importScreen=async(shop,id)=>screen(id);
-        export const createPreview=async(shop,markup,api,choices,configuration)=>preview(markup,choices,configuration);
+        export const createPreview=async(shop,markup,api,choices,configuration,policy)=>preview(markup,choices,configuration,policy);
         export const queueJob=async(shop,id,retry,confirmation)=>queue(id,retry,confirmation);`;
       if (id.endsWith("/app/inventory.server.ts")) return `import {inventory} from "virtual:ux-state";
         export const inventoryScreen=async()=>inventory;
