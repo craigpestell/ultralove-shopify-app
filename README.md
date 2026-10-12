@@ -940,9 +940,9 @@ the running release below was deployed from a git archive independently.
 Production rollout and independent retailer onboarding require separate work
 and approval.
 
-## Bulk inventory enrollment and cross-product batches (pending deployment)
+## Bulk inventory enrollment and cross-product batches
 
-The next release adds **Enable inventory sync for all** to Inventory. Its required
+Release `b6a2af4` adds **Enable inventory sync for all** to Inventory. Its required
 confirmation covers every currently imported eligible product, not just the
 current search/filter. Already-enabled products retain their exact schedule and
 revision; running or unverified listings and protected uncertain corrections are
@@ -990,23 +990,70 @@ five-product request-count reductions, 250/53 cross-product correction bounds,
 pause-before-dispatch, missing/malformed siblings, uncertain responses,
 restart/idempotent recovery and shared-key expiry/incomplete-ledger protection.
 
-**Not live yet:** deploy the updated WordPress development feed client and
+**Deployment order:** deploy the updated WordPress development feed client and
 restricted catalog proxy **before** the app/worker release. The new proxy
 operation is `inventory-sync-batch`; the existing `inventory-sync` operation
 remains compatible. Do not enable production or bulk-enroll lab products as
-part of deployment verification without explicit approval. The currently
-deployed release and prior verification records below remain unchanged.
+part of deployment verification without explicit approval.
+
+### Batch inventory deployment verification, 2026-10-12
+
+App release `b6a2af4c413cbba73e3a166965593db6d657abf4` is committed, pushed
+and deployed from its exact archive to the isolated lab. App checks passed
+(run `38191931928`); all 73 tests, typecheck, lint and both builds also passed
+on the deployment host. No migrations were pending. Generated inventory
+queries passed Admin API 2026-10 schema validation; the inventory controls
+passed Polaris App Home validation and offline browser checks.
+
+The supplier batching dependency was deployed without drift as `4920e48`,
+then merged through UltraLove PR #148 as `aa98f3f`. The merge CI and automatic
+development deployment passed (runs `38192408281` and `38192408185`).
+The restricted proxy was installed from the exact app release only after
+its prior source hash matched git; credentials, forced-key restrictions,
+firewalls and scopes were not changed.
+
+A read-only live verification processed five imported single-variant
+products through one supplier batch operation, one shop/location query
+and one Shopify inventory batch query. Maximum requested GraphQL cost was
+34, below Shopify's 1,000-point query limit. All five source stock plans
+matched their existing Shopify quantities. No stock mutation or inventory
+enrollment occurred. Cross-product corrections, uncertain responses,
+pause/restart and expiry were verified in persistent isolated regressions,
+not by modifying live stock. The 300-product browser fixture confirmed
+that filtering to one row still targets all current imports, requires
+confirmation, reports skipped listings and preserves individual pause.
+
+Exact comparison with `inventory-batch-baseline-20261012T013058Z.sqlite`
+preserved all 36 jobs, 1,758 import items, 227 claims, saved selection/pricing
+and the two existing paused inventory rows. SQLite integrity/foreign keys,
+HTTPS and all three services passed; implementation hashes match the archive.
+The provisioner backup is `20261012T013058574820Z.sqlite` (0600).
+The development WordPress backup is
+`20261012T012858Z-7c6e42a910.tgz`; the protected proxy rollback copy is
+`pre-inventory-batch-b6a2af4c413cbba73e3a166965593db6d657abf4.php`.
+Temporary server verification code was removed.
+
+The app's previous-release symlink is `6630e89`, the verified pre-batching
+release. The new supplier/proxy retain the old single-product operation,
+so this app rollback does not require reverting the supplier dependency.
+Before rolling back after batch sync has been used, pause products with shared
+pending corrections and retain their complete records: the old worker cannot
+recover cross-product requests. Resolve them with the batch-capable release or
+review the entire group before approving fresh enrollment; never erase one
+participant's pending record to make an older worker proceed.
+Missing listings 71955 and 19969 remain paused for reviewed recovery.
+Bulk enrollment was not executed on the live store; production is unchanged.
 
 ## Current host and rollback
 
-The deployed release is `6630e89` on the isolated integration-lab
+The deployed release is `b6a2af4` on the isolated integration-lab
 droplet. Node 24.21.0 runs as `ultralove-shopify` on `127.0.0.1:3097`,
 proxied by its separate HTTPS Nginx vhost. Source is under
 `/srv/ultralove-shopify/releases`; `current` selects the release.
 Sessions are in `/var/lib/ultralove-shopify/sessions.sqlite` (mode 0600).
 The app environment is root-readable only at `/etc/ultralove-shopify/app.env`.
 Request logging omits query parameters. The development supplier feed client
-is deployed as `618a71a`; production WordPress is untouched.
+is deployed as `aa98f3f`; production WordPress is untouched.
 The separate `ultralove-shopify-imports` service runs as the same non-root user,
 with a singleton worker lock. Persistent jobs, creation claims and inventory
 enrollment/checkpoints share the

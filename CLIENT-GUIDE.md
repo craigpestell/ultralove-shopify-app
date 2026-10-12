@@ -154,15 +154,15 @@ scheduled about every five minutes, with queued imports taking priority.
 Removing a product from a working catalog selection does not automatically
 pause its inventory sync.
 
-**Prepared for the next lab update; not live yet:** an **Enable inventory sync
-for all** action will let you confirm inventory-only sync for every currently
-imported eligible product. It applies to the entire imported list, regardless
+Use **Enable inventory sync for all** to confirm inventory-only sync for every
+currently imported eligible product. Select its confirmation checkbox, then
+choose the button. It applies to the entire imported list, regardless
 of the search or filter. Already-enabled products stay unchanged, while
 unverified listings and protected pending corrections are skipped with a
 reason. The result shows how many products were enabled, already enabled or
 skipped. Products imported later still require explicit enrollment.
 
-That update also synchronizes products in bounded cross-product batches
+The app synchronizes products in bounded cross-product batches
 instead of processing every product separately. Individual pause and
 **Sync now** controls remain. If an unconfirmed stock correction spans multiple
 products, pausing one participant prevents that correction from being retried
@@ -179,7 +179,7 @@ descriptions or publication.
 | Reviewed imports and selected listing updates | Working in the integration lab |
 | Large selection/review search and pagination | Working in the integration lab |
 | Inventory correction, pause/resume and recovery | Verified with controlled lab stock tests |
-| Enable-all inventory controls and cross-product batching | Implemented and locally verified; pending lab deployment |
+| Enable-all inventory controls and cross-product batching | Available in the lab; verified by tests and read-only live checks |
 | Source catalog image quality | Some products still require source-image repair |
 | Independent retailer/store onboarding | Still to be completed beyond this lab store |
 | Shopify order forwarding and tracking | Remaining implementation and end-to-end verification |
