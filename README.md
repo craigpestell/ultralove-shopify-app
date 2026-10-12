@@ -125,6 +125,41 @@ integration lab's installed Apps list. The app ID, existing installation,
 permissions, embedded URL and redirects are unchanged. The old URL handle
 `ultralove-dropshipping-lab` is intentionally retained.
 
+### Verified integration-lab rollout
+
+Fulfillment modes are deployed as release
+`a52a5d15d580b251eb340ba59d7e654233b672e1`. A protected SQLite backup preceded
+the additive migration. All 75 tests, TypeScript, ESLint, app/worker builds,
+Nginx validation and HTTPS readiness passed on the lab host.
+
+The pre/post-deploy comparison preserved the 126-product saved selection,
+pricing, job counts, all 227 claims, all 112 inventory enrollments and all
+110 enabled enrollments. Historical items and claims remain dropshipping.
+Authenticated browser checks verified the new catalog-only default, applying
+dropshipping to the selection, per-product mixed choices and existing inventory
+labels; the working choices were restored without saving changes.
+Offline browser checks also verified frozen mixed-mode reviews, stale-choice
+confirmation blocking and catalog-only inventory rows without enrollment controls.
+
+Read-only live supplier plans for products `18704`, `25779`, `17186` and `23742`
+passed both mode validators: catalog payloads omit every supplier quantity,
+retain tracking and deny overselling; dropshipping quantities remain intact.
+The approved title stripping remains visible in those plans. No Shopify product
+creation, inventory change, fulfillment conversion or publication was performed
+for rollout verification; creation behavior is covered by the mocked API/SQLite
+integration tests.
+
+The existing saved selection contains supplier product `68951`, now `pending`
+rather than published. Its selected-detail batch fails explicitly and retains
+the selection. Remove or republish this product before previewing the entire
+saved batch; deployment deliberately does not alter supplier publication or
+discard saved selections. The other selected-detail batches load normally.
+
+Polaris validation passed for the catalog, review and recovery components.
+The inventory route's standalone toolkit validator cannot resolve the existing
+server SDK import; repository typecheck/build and rendered inventory browser
+checks passed. No server imports were changed to accommodate that tool limitation.
+
 In **Catalog**, select one or more parents, then open **Selection & pricing** and set the
 **Default retail markup** between 0 and 1000 percent, with at most two decimal
 places. The default applies to every
