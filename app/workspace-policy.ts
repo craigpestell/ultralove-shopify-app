@@ -3,8 +3,10 @@ import { markupOverrides, markupPercent, pricingSignature } from "./pricing-poli
 import type { MarkupOverrides } from "./pricing-policy";
 import { defaultListingPolicy, listingPolicy } from "./listing-policy";
 import type { ListingPolicy } from "./listing-policy";
+import { fulfillmentModes, fulfillmentSignature } from "./fulfillment-policy";
+import type { FulfillmentModes } from "./fulfillment-policy";
 
-export type Configuration = { selected: number[]; markup: string; markups: MarkupOverrides };
+export type Configuration = { selected: number[]; markup: string; markups: MarkupOverrides; fulfillmentModes?: FulfillmentModes };
 export type ProductSummary = { id: number; name: string; sku: string; price: string | null; type: string };
 export type Draft = Configuration & {
   baseline: string; products: Record<string, ProductSummary>; browse: string; active: boolean; publish: boolean;
@@ -12,7 +14,7 @@ export type Draft = Configuration & {
   selectionSearch: string; selectionPage: number;
 };
 export const SELECTION_PAGE_SIZE = 25;
-export const signature = (value: Configuration) => pricingSignature(value.selected, value.markup, value.markups);
+export const signature = (value: Configuration) => `${pricingSignature(value.selected, value.markup, value.markups)}:${fulfillmentSignature(value.selected, value.fulfillmentModes ?? {})}`;
 
 export function selectedPage(ids: number[], products: Record<string, Pick<ProductSummary, "name" | "sku">>, search: string, requestedPage: number) {
   const term = search.trim().replace(/\s+/g, " ").toLowerCase();
@@ -51,7 +53,7 @@ export function restoreDraft(value: unknown, saved: Configuration): Draft | null
     const selectionPage = draft.selectionPage ?? 1;
     if (typeof selectionSearch !== "string" || selectionSearch.length > 100 ||
         !Number.isSafeInteger(selectionPage) || selectionPage < 1) return null;
-    return { selected, markup: draft.markup, markups: draft.markups, baseline: draft.baseline, products,
+    return { selected, markup: draft.markup, markups: draft.markups, fulfillmentModes: fulfillmentModes(draft.fulfillmentModes ?? {}, selected), baseline: draft.baseline, products,
       listingPolicy: { ...policy, mode: existing.mode },
       selectionSearch, selectionPage,
       browse: browse.toString(), active: draft.active === true, publish: draft.active === true && draft.publish === true };
@@ -86,7 +88,7 @@ export function statusLabel(status: string): string {
   return ({
     PREVIEW: "Awaiting confirmation", QUEUED: "Queued", RUNNING: "In progress", COMPLETE: "Completed",
     FAILED: "Needs attention", CREATED: "Created", REUSED: "Existing listing kept", UPDATED: "Updated from UltraLove", LINKED: "Existing listing connected",
-    NOT_ENROLLED: "Sync off", PAUSED: "Paused", ENABLED: "Sync on", IDLE: "Sync on", SYNCED: "Up to date", REVIEW: "Review required",
+    NOT_ENROLLED: "Sync off", PAUSED: "Paused", ENABLED: "Sync on", IDLE: "Sync on", SYNCED: "Up to date", REVIEW: "Review required", DELETED: "Deleted in Shopify",
   } as Record<string, string>)[status] ?? status.toLowerCase().replaceAll("_", " ");
 }
 

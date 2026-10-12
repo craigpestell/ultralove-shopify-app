@@ -51,6 +51,11 @@ const sshTransport: Transport = (request) => new Promise((resolve, reject) => {
       if (stdout.trim()) {
         try {
           const response: unknown = JSON.parse(stdout);
+          if (object(response) && object(response.error) && response.error.status === 409 &&
+              response.error.code === "SELECTED_PRODUCT_UNAVAILABLE") {
+            reject(new CatalogError("A selected supplier product or variant is no longer published or available. Review your selection before retrying; no partial supplier data was accepted."));
+            return;
+          }
           if (object(response) && object(response.error) && response.error.status === 429 &&
               typeof response.error.retryAfter === "number" && Number.isSafeInteger(response.error.retryAfter) &&
               response.error.retryAfter > 0 && response.error.retryAfter <= 2147483647) {

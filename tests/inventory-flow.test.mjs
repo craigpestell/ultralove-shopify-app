@@ -53,6 +53,7 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
     const { INVENTORY_QUERY, INVENTORY_BATCH_QUERY, INVENTORY_SET_MUTATION } = await server.ssrLoadModule("/app/inventory-engine.ts");
     const { CONTEXT_QUERY } = await server.ssrLoadModule("/app/import-engine.ts");
     const { feed, CatalogError } = await server.ssrLoadModule("/app/catalog.server.ts");
+    const { markListingDeleted } = await server.ssrLoadModule("/app/listing-lifecycle.server.ts");
     const { auth } = await server.ssrLoadModule("/app/shopify.server.ts");
     const shop = auth.shop;
     const location = "gid://shopify/Location/1";
@@ -535,10 +536,10 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
       return api(query, variables);
     }, "inventory-all-current");
     assert.ok(partial.error);
-    assert.equal(partial.enabled, 3, "completed enrollment remains truthful when a later validation batch loses its connection");
+    assert.equal(partial.enabled, 4, "completed enrollment remains truthful when a later validation batch loses its connection; archived products do not consume batch slots");
     assert.equal(partial.total, partial.enabled + partial.alreadyEnabled + partial.blocked.length);
-    assert.ok(partial.blocked.filter(product => product.supplierId >= 2603).every(product => /Not enabled:/.test(product.error)));
-    assert.equal(await db.inventorySync.count({ where: { shop, supplierId: { gte: 2600, lt: 2610 }, enabled: true } }), 3);
+    assert.ok(partial.blocked.filter(product => product.supplierId >= 2604).every(product => /Not enabled:/.test(product.error)));
+    assert.equal(await db.inventorySync.count({ where: { shop, supplierId: { gte: 2600, lt: 2610 }, enabled: true } }), 4);
 
     desired = 19; cursor = 29;
     feed.value = id => source(id, [id * 10 + 1], desired, cursor);
@@ -563,6 +564,48 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
     await runInventoryCycle(shop, 1900, api);
     assert.equal(mutationRequests, expiredRequests, "an incomplete shared ledger cannot be replayed with a changed subset");
     assert.match((await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 1900 } } })).error, /incomplete or inconsistent/);
+    await seed(2900, [2901]);
+    await db.importClaim.update({ where: { shop_supplierId: { shop, supplierId: 2900 } }, data: { fulfillmentMode: "CATALOG" } });
+    const catalogBaseline = { contextRequests, inventoryRequests, mutationRequests };
+    await assert.rejects(inventoryControl(shop, 2900, "enable", api, "inventory-only"), /retailer-managed/);
+    await assert.rejects(inventoryControl(shop, 2900, "sync-now", api), /retailer-managed/);
+    assert.deepEqual({ contextRequests, inventoryRequests, mutationRequests }, catalogBaseline, "catalog-only requests never reach Shopify inventory");
+    const mixedEnrollment = await enableAllInventory(shop, api, "inventory-all-current");
+    assert.ok(mixedEnrollment.blocked.some((product) => product.supplierId === 2900 && /own stock/.test(product.error)));
+    assert.equal(await db.inventorySync.count({ where: { shop, supplierId: 2900 } }), 0, "enable-all cannot enroll catalog-only products");
+    await db.inventorySync.create({ data: {
+      shop, supplierId: 2900, productId: "gid://shopify/Product/2900", locationId: location,
+      mappings: JSON.stringify([{ sourceId: 2901, variantId: "gid://shopify/ProductVariant/2901", inventoryItemId: "gid://shopify/InventoryItem/2901" }]),
+      enabled: true, status: "QUEUED", nextRunAt: new Date(0),
+    } });
+    const requestsBeforeCatalogCycle = mutationRequests;
+    await runInventoryCycle(shop, 2900, api);
+    assert.equal(mutationRequests, requestsBeforeCatalogCycle, "a stale enabled state cannot overwrite retailer-managed stock");
+    const catalogSync = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 2900 } } });
+    assert.equal(catalogSync.enabled, false);
+    assert.equal(catalogSync.status, "REVIEW");
+    assert.match(catalogSync.error, /fulfillment mode/);
+    for (const id of [3000, 3100]) {
+      await seed(id, [id + 1]);
+      await inventoryControl(shop, id, "enable", api, "inventory-only");
+    }
+    feed.value = id => source(id, [id + 1], 20, 30);
+    let deletedDuringRead = false;
+    feed.hook = async () => {
+      if (deletedDuringRead) return;
+      deletedDuringRead = true;
+      products.delete("gid://shopify/Product/3000");
+      await markListingDeleted(shop, "gid://shopify/Product/3000");
+    };
+    const beforeConcurrentDeletion = mutationSizes.length;
+    await runInventoryBatch(shop, [3000, 3100], api);
+    feed.hook = null;
+    assert.deepEqual(mutationSizes.slice(beforeConcurrentDeletion), [1],
+      "deletion during a running batch excludes that listing without stopping healthy products");
+    const stopped = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 3000 } } });
+    assert.equal(stopped.enabled, false);
+    assert.equal(stopped.pending, null, "no stock correction is reserved after deletion");
+    assert.equal((await inventoryScreen(shop)).find(product => product.supplierId === 3000).status, "DELETED");
     auth.rejected = true;
     await assert.rejects(loader({ request: new Request("https://app.example/app/inventory") }), (error) => error.status === 403);
   } finally {

@@ -42,6 +42,7 @@ test("Prisma listing previews/worker persist approvals, recover missing mappings
     }
     const { createPreview, importScreen, queueJob, runJob } = await server.ssrLoadModule("/app/imports.server.ts");
     const { inventoryScreen } = await server.ssrLoadModule("/app/inventory.server.ts");
+    const { markListingDeleted } = await server.ssrLoadModule("/app/listing-lifecycle.server.ts");
     const mock = listingApi();
     let creates = 0;
     let createFailure = null;
@@ -186,6 +187,7 @@ test("Prisma listing previews/worker persist approvals, recover missing mappings
     assert.ok(mock.state.product.tags.includes("retailer-tag"));
 
     await reset(retailerListing({ owned: false, id: "gid://shopify/Product/2" }));
+    await markListingDeleted(shop, "gid://shopify/Product/1");
     await db.inventorySync.create({ data: { shop, supplierId: 100, productId: "gid://shopify/Product/1", locationId: location,
       mappings: '[{"sourceId":100,"variantId":"gid://shopify/ProductVariant/10","inventoryItemId":"gid://shopify/InventoryItem/20"}]',
       enabled: false } });
@@ -207,8 +209,12 @@ test("Prisma listing previews/worker persist approvals, recover missing mappings
     await runJob(racingBinding.id, shop, api, () => false);
     assert.equal((await importScreen(shop, racingBinding.id)).job.status, "COMPLETE");
     assert.equal((await db.inventorySync.findUnique({ where: { shop_supplierId: { shop, supplierId: 100 } } })).enabled, false);
+    assert.equal((await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId: 100 } } })).deletedAt, null,
+      "confirmed reconnection clears the archive without enabling stock sync");
 
     await reset(null);
+    await markListingDeleted(shop, "gid://shopify/Product/1");
+    assert.ok((await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId: 100 } } })).deletedAt);
     const missing = await preview();
     const reviewedReplacement = (await importScreen(shop, missing.id)).job;
     assert.equal(reviewedReplacement.items[0].listing.action, "RECREATE");
@@ -236,6 +242,8 @@ test("Prisma listing previews/worker persist approvals, recover missing mappings
     assert.equal((await importScreen(shop, replacement.id)).job.status, "COMPLETE");
     assert.equal(creates, createsAtFailure, "uncertain replacement reconciles the own-run product without a second creation");
     assert.equal(mock.state.product.status, "DRAFT");
+    assert.equal((await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId: 100 } } })).deletedAt, null,
+      "explicitly confirmed replacement restores the current mapping");
     const work = JSON.parse((await db.importItem.findFirst({ where: { jobId: replacement.id } })).listingWork);
     assert.equal(work.expectedProductId, "gid://shopify/Product/1");
     assert.equal(work.replacementReserved, true);

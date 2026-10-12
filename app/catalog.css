@@ -89,6 +89,8 @@
 .selection-products li { display: grid; grid-template-columns: minmax(120px, 1fr) 115px 130px auto; align-items: center; gap: 16px; padding: 16px 0; border-top: 1px solid var(--workspace-border); }
 .selection-products label { font-size: 12px; }
 .selection-products input { width: 100%; box-sizing: border-box; }
+.selection-fulfillment { grid-column: 1 / -1; }
+.selection-fulfillment select { width: 100%; max-width: 360px; }
 .selection-product-name strong { display: block; font-size: 14px; line-height: 1.5; }
 .selection-price strong { font-size: 14px; font-variant-numeric: tabular-nums; }
 .workspace .quiet-button { padding: 8px 4px; border: 0; background: none; color: #005bd3; text-decoration: underline; text-underline-offset: 3px; }

@@ -101,8 +101,8 @@ test("unified catalog saves validated selections in place and keeps failures on 
       const expected = JSON.stringify([...ids].sort((a, b) => a - b));
       assert.deepEqual(persistence.writes.at(-1), {
         where: { shop },
-        create: { shop, productIds: expected, markups: "{}" },
-        update: { productIds: expected, markups: "{}" },
+        create: { shop, productIds: expected, markups: "{}", fulfillmentModes: "{}" },
+        update: { productIds: expected, markups: "{}", fulfillmentModes: "{}" },
       });
       assert.equal(JSON.stringify(validation.calls.at(-1)), expected);
     }
@@ -140,12 +140,27 @@ test("unified catalog saves validated selections in place and keeps failures on 
     const saved = await action({ request: request(configuration) });
     assert.equal(saved.data.saved, true);
     assert.deepEqual(persistence.writes.at(-1).update, {
-      productIds: "[1,2]", markup: "25.00", markups: '{"2":"50.50"}',
+      productIds: "[1,2]", markup: "25.00", markups: '{"2":"50.50"}', fulfillmentModes: "{}",
     });
     const preview = await action({ request: request(configuration.map(([key, value]) => [key, key === "intent" ? "preview" : value])) });
     assert.equal(preview.headers.get("Location"), `/app?category_id=5&job=${"a".repeat(32)}&view=review`);
-    assert.deepEqual(imports.previews.at(-1)[4], { ids: [1, 2], markups: { 2: "50.50" } });
+    assert.deepEqual(imports.previews.at(-1)[4], { ids: [1, 2], markups: { 2: "50.50" }, fulfillmentModes: {} });
     assert.deepEqual(imports.previews.at(-1)[3], { active: false, publish: false });
+    const fulfillmentPreview = await action({ request: request([
+      ...configuration.map(([key, value]) => [key, key === "intent" ? "preview" : value]),
+      ["fulfillment-modes", '{"2":"DROPSHIPPING"}'],
+    ]) });
+    assert.equal(fulfillmentPreview.status, 302);
+    assert.deepEqual(imports.previews.at(-1)[4].fulfillmentModes, { 2: "DROPSHIPPING" });
+    const fulfillmentPreviews = imports.previews.length;
+    for (const modes of ["bad JSON", "[]", '{"3":"DROPSHIPPING"}', '{"1":"bad"}']) {
+      const rejected = await action({ request: request([
+        ...configuration.map(([key, value]) => [key, key === "intent" ? "preview" : value]),
+        ["fulfillment-modes", modes],
+      ]) });
+      assert.equal(rejected.init.status, 400);
+      assert.equal(imports.previews.length, fulfillmentPreviews);
+    }
     const listingPolicy = { mode: "UPDATE", content: true, images: false, prices: true,
       links: { 1: "https://admin.shopify.com/store/ultralove-integration-lab/products/123" }, recreate: [2] };
     const updatePreview = await action({ request: request([

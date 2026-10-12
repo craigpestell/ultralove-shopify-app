@@ -37,6 +37,8 @@ export default function ListingRecovery({ job, busy, onPreview }: { job: Job; bu
       <input type="hidden" name="ids" value={JSON.stringify(job.items.map((item) => item.supplierId))} />
       <input type="hidden" name="markup" value={job.markup} />
       <input type="hidden" name="markups" value={JSON.stringify(job.markups)} />
+      <input type="hidden" name="fulfillment-modes" value={JSON.stringify(Object.fromEntries(
+        job.items.filter((item) => item.fulfillmentMode === "DROPSHIPPING").map((item) => [item.supplierId, item.fulfillmentMode])))} />
       {job.active && <input type="hidden" name="active" value="yes" />}
       {job.publicationId && <input type="hidden" name="publish" value="yes" />}
       <s-button type="submit" variant="primary" disabled={busy} loading={busy}>Validate connections and create fresh review</s-button>

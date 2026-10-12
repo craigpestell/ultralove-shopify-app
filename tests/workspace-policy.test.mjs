@@ -21,6 +21,10 @@ test("workspace restores multi-page drafts, preserves unfinished edits and store
     assert.equal(restored.listingPolicy.mode, "KEEP", "old browser drafts default to keeping existing listings");
     assert.equal(restored.selectionSearch, "");
     assert.equal(restored.selectionPage, 1);
+    assert.deepEqual(restored.fulfillmentModes, {});
+    assert.deepEqual(restoreDraft({ ...draft, fulfillmentModes: { 200: "DROPSHIPPING" } }, saved).fulfillmentModes, { 200: "DROPSHIPPING" });
+    assert.equal(restoreDraft({ ...draft, fulfillmentModes: { 300: "DROPSHIPPING" } }, saved), null);
+    assert.equal(restoreDraft(draft, { ...saved, fulfillmentModes: { 100: "DROPSHIPPING" } }), null);
     assert.equal(restoreDraft({ ...draft, selectionSearch: "Amber", selectionPage: 3 }, saved).selectionPage, 3);
     for (const selectionPage of [0, -1, 1.5, "2"]) assert.equal(restoreDraft({ ...draft, selectionPage }, saved), null);
     assert.equal(restoreDraft({ ...draft, selectionSearch: "a".repeat(101) }, saved), null);

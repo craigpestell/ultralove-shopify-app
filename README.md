@@ -1,6 +1,7 @@
 # UltraLove Shopify app
 
-Separate web interface for the existing **UltraLove Dropshipping Lab** app,
+Separate web interface for the existing **UltraLove Catalog** app (formerly
+**UltraLove Dropshipping Lab**),
 scaffolded from Shopify's MIT-licensed React Router template. The upstream
 license remains in [LICENSE.md](LICENSE.md).
 
@@ -9,6 +10,53 @@ see [the client guide](CLIENT-GUIDE.md). Arrange client store access separately;
 the guide intentionally contains no passwords or private credentials.
 
 ## Status
+
+### Deleted Shopify listings
+
+Inventory keeps deleted-listing history in a **Deleted / archived** view rather
+than displaying it as current stock. A retained `ImportClaim.deletedAt` timestamp
+stops supplier sync, excludes the listing from current counts and bulk enrollment,
+and preserves import history, creation guards and uncertain stock corrections.
+Recovery creates a separately confirmed preview for a new unpublished draft or
+an explicitly connected existing listing. Supplier sync remains opt-in afterward.
+
+Deploy migration `20261012034000_deleted_listings` with the app and worker.
+Deploy/register the `products/delete` subscription in `shopify.app.toml`, or
+register its shop-specific callback through the Admin API, to enable prompt signed
+deletion notifications. The worker also checks all current mapped
+listings, including catalog-only and unenrolled products, about every five minutes
+in batches of at most 50 IDs. This backfills deletions predating the webhook.
+GraphQL errors, transport failures and malformed/partial responses never mark
+listings deleted. Failed verification is logged and retried after five minutes.
+Deploying app code alone does not register an app-configuration subscription;
+verify the deletion callback separately as part of rollout.
+
+### Deleted-listing lifecycle deployment, 2026-10-11
+
+Release `364dad4776824ecbf346658d4f14f73f2d512658` is committed locally and
+deployed from its exact git archive to the integration lab. It also corrects
+completed listing comparisons to show applied changes with Before/After labels.
+All 76 tests, typecheck, lint and app/worker builds passed on the deployment host.
+Migration `20261012034000_deleted_listings` is applied; no migrations remain pending.
+
+The shop-specific `PRODUCTS_DELETE` subscription is registered for the existing
+app URL's `/webhooks/products/delete` callback. A signed duplicate delivery for
+an already archived mapping returned 200 without changing its mapping or stock
+record; an invalid signature returned 401. All 227 saved mapped IDs were checked.
+Inventory now contains 1 current entry and 223 deleted/archived entries out of
+224 completed-import entries. No product was recreated, published or enrolled.
+
+SQLite integrity and foreign keys passed. Comparison with the protected baseline
+preserved all 41 jobs, 1,763 items, 227 historical claims, saved selection/pricing,
+and the identities, mappings, checkpoints and protected corrections of all 112
+inventory rows. HTTPS returned 200; app, worker and Nginx are active, with no worker
+errors observed after restart. Deployed source hashes match the release.
+
+The protected deployment backup is `20261012T035032229881Z.sqlite`; the preflight
+baseline is `deleted-listings-baseline-20261012T0348Z.sqlite` (0600). The previous
+release and rollback symlink point to `5fbb5cb7ba26266db1d2765385ed5ff1fb849952`.
+No GitHub push, Shopify app-wide configuration deployment, scope changes or
+WordPress/production deployment was performed.
 
 The embedded catalog browser and saved selections are deployed and connected
 to the real development feed.
@@ -91,6 +139,83 @@ Store publication for newly imported products. The additional publication scopes
 are authorized for the existing lab installation.
 
 ## Pricing and product-import jobs
+
+### Fulfillment choices
+
+New selections default to **Catalog only — my own stock**. Choose
+**How will you fulfill these products?** to apply a mode to the whole selected
+batch, or override individual products beside their markup. Choices persist
+with the selection and immutable review; confirmation covers every product's
+mode. Changing working choices does not change existing Shopify stock or sync.
+
+- **Catalog only:** import content, variants, SKUs and reviewed prices without
+  `inventoryQuantities`. Tracking stays on and overselling is denied; Shopify
+  stock is empty/zero until the retailer sets their own quantities. New products
+  default to drafts. Supplier inventory enrollment, bulk enrollment and
+  scheduled corrections are blocked for these products.
+- **Dropshipping:** import supplier availability. Inventory sync still needs
+  explicit enrollment after import. This choice does not grant dropshipping
+  approval or enable order forwarding. Approval and fulfillment activation
+  remain separate; the lab app still has no order-forwarding feature.
+
+Existing import snapshots and claims migrate as dropshipping to preserve their
+current payloads and opt-in sync. Existing enrollments, quantities and publication
+are not changed by deployment. Switching an imported product's mode requires a
+new confirmed review; pause sync and reconcile pending corrections first.
+Switching modes never changes existing stock automatically.
+The additive `20261012030000_fulfillment_modes` migration must run before the new
+app and worker. The Shopify Apps-list name is separate platform configuration:
+changing this web UI alone does not rename the installed app.
+The existing app's name-only configuration version `ultralove-catalog-name`
+(`1163369840641`) is active, and **UltraLove Catalog** is verified in the
+integration lab's installed Apps list. The app ID, existing installation,
+permissions, embedded URL and redirects are unchanged. The old URL handle
+`ultralove-dropshipping-lab` is intentionally retained.
+
+### Verified integration-lab rollout
+
+Fulfillment modes are deployed as release
+`a52a5d15d580b251eb340ba59d7e654233b672e1`. A protected SQLite backup preceded
+the additive migration. All 75 tests, TypeScript, ESLint, app/worker builds,
+Nginx validation and HTTPS readiness passed on the lab host.
+
+The pre/post-deploy comparison preserved the 126-product saved selection,
+pricing, job counts, all 227 claims, all 112 inventory enrollments and all
+110 enabled enrollments. Historical items and claims remain dropshipping.
+Authenticated browser checks verified the new catalog-only default, applying
+dropshipping to the selection, per-product mixed choices and existing inventory
+labels; the working choices were restored without saving changes.
+Offline browser checks also verified frozen mixed-mode reviews, stale-choice
+confirmation blocking and catalog-only inventory rows without enrollment controls.
+
+Read-only live supplier plans for products `18704`, `25779`, `17186` and `23742`
+passed both mode validators: catalog payloads omit every supplier quantity,
+retain tracking and deny overselling; dropshipping quantities remain intact.
+The approved title stripping remains visible in those plans. No Shopify product
+creation, inventory change, fulfillment conversion or publication was performed
+for rollout verification; creation behavior is covered by the mocked API/SQLite
+integration tests.
+
+The existing saved selection contains supplier product `68951`, now `pending`
+rather than published. Its selected-detail batch fails explicitly and retains
+the selection. Remove or republish this product before previewing the entire
+saved batch; deployment deliberately does not alter supplier publication or
+discard saved selections. The other selected-detail batches load normally.
+The restricted supplier proxy reports this known rejection using the bounded
+`409 / SELECTED_PRODUCT_UNAVAILABLE` envelope, not arbitrary exception text.
+The app explains that a selected product or variant is no longer published or
+available instead of presenting it as a temporary connection outage.
+Genuine transport failures and the existing bounded rate-limit handling remain
+unchanged; no partial selection or import data is accepted.
+This error-message fix is deployed as lab release `5fbb5cb`. Read-only live
+checks verified valid product details and the corrected rejection through
+details, selection validation and import planning. The supplier proxy's protected
+rollback copy is `/var/backups/ultralove-catalog-proxy.before-5fbb5cb.php` on dev.
+
+Polaris validation passed for the catalog, review and recovery components.
+The inventory route's standalone toolkit validator cannot resolve the existing
+server SDK import; repository typecheck/build and rendered inventory browser
+checks passed. No server imports were changed to accommodate that tool limitation.
 
 In **Catalog**, select one or more parents, then open **Selection & pricing** and set the
 **Default retail markup** between 0 and 1000 percent, with at most two decimal

@@ -38,6 +38,7 @@ model CatalogSelection {
   productIds String   @default("[]")
   markup     String   @default("0.00")
   markups    String   @default("{}")
+  fulfillmentModes String @default("{}")
   updatedAt  DateTime @updatedAt
 }
 
@@ -70,6 +71,7 @@ model ImportItem {
   sku        String
   wholesale  String
   payload    String
+  fulfillmentMode String @default("DROPSHIPPING")
   listing    String    @default("{}")
   listingWork String   @default("{}")
   status     String    @default("PENDING")
@@ -86,9 +88,13 @@ model ImportClaim {
   supplierId        Int
   runId             String
   productId         String?
+  fulfillmentMode   String @default("DROPSHIPPING")
   mutationStartedAt DateTime?
+  deletedAt         DateTime?
+  listingCheckedAt  DateTime?
 
   @@id([shop, supplierId])
+  @@index([shop, deletedAt, listingCheckedAt])
 }
 
 model InventorySync {

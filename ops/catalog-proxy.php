@@ -114,7 +114,9 @@ try {
     }
     echo json_encode( $result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES ) . "\n";
 } catch ( RuntimeException | InvalidArgumentException | JsonException $error ) {
-    if ( $error->getCode() === 429 && preg_match( '/; retry after ([0-9]+) seconds/', $error->getMessage(), $matches )
+    if ( $error->getMessage() === 'Selected product/variation is missing or unavailable; no partial import.' ) {
+        echo json_encode( array( 'error' => array( 'status' => 409, 'code' => 'SELECTED_PRODUCT_UNAVAILABLE' ) ), JSON_THROW_ON_ERROR ) . "\n";
+    } elseif ( $error->getCode() === 429 && preg_match( '/; retry after ([0-9]+) seconds/', $error->getMessage(), $matches )
         && (int) $matches[1] > 0 && (int) $matches[1] <= 2147483647 ) {
         echo json_encode( array( 'error' => array( 'status' => 429, 'retryAfter' => (int) $matches[1] ) ), JSON_THROW_ON_ERROR ) . "\n";
     }

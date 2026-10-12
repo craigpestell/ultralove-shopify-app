@@ -4,7 +4,7 @@ import db from "./db.server";
 import { CATALOG_BATCH_SIZE, selectionIds } from "./catalog-policy";
 import { importPlan, validateSelection } from "./catalog.server";
 import { assertLabShop } from "./lab-policy.server";
-import { ImportError, MAX_PREVIEW_AGE, importConfirmation, importDraft, importSettings, markupPercent, matchProduct, onlineStorePublication, ownedProduct, payload, plannedFeed, priceRange, remoteCatalog, reviewLabels, shopContext } from "./import-engine";
+import { ImportError, MAX_PREVIEW_AGE, catalogOnlyPayload, importConfirmation, importDraft, importSettings, markupPercent, matchProduct, onlineStorePublication, ownedProduct, payload, plannedFeed, priceRange, remoteCatalog, reviewLabels, shopContext } from "./import-engine";
 import type { GraphQL } from "./import-engine";
 import { markupOverrides, retailPrice } from "./pricing-policy";
 import type { MarkupOverrides } from "./pricing-policy";
@@ -12,12 +12,19 @@ import { defaultListingPolicy, listingPolicy, listingSignature } from "./listing
 import type { ListingPolicy } from "./listing-policy";
 import { applyListing, assertLinkOwnership, listingChanges, listingSnapshot, matchListingVariants, supplierVariantIds } from "./listing-engine";
 import type { ListingReview, ListingWork } from "./listing-engine";
+import { fulfillmentMode, fulfillmentModes, modeFor } from "./fulfillment-policy";
+import type { FulfillmentModes } from "./fulfillment-policy";
 
 const completed = ["CREATED", "REUSED", "UPDATED", "LINKED"];
-function listingConfirmation(active: boolean, publicationId: string | null, policy: ListingPolicy) {
+function listingConfirmation(active: boolean, publicationId: string | null, policy: ListingPolicy,
+  items: { supplierId: number; fulfillmentMode: string }[] = []) {
   const base = importConfirmation(importSettings(active, publicationId));
-  return listingSignature(policy) === listingSignature(defaultListingPolicy()) ? base
+  const listing = listingSignature(policy) === listingSignature(defaultListingPolicy()) ? base
     : `${base}:listing:${createHash("sha256").update(listingSignature(policy)).digest("hex")}`;
+  return items.some((item) => fulfillmentMode(item.fulfillmentMode) === "CATALOG")
+    ? `${listing}:fulfillment:${createHash("sha256").update(JSON.stringify(items.map((item) =>
+      [item.supplierId, fulfillmentMode(item.fulfillmentMode)]).sort((a, b) => Number(a[0]) - Number(b[0])))).digest("hex")}`
+    : listing;
 }
 function review(value: string, productId: string | null): ListingReview {
   const saved = JSON.parse(value);
@@ -38,7 +45,8 @@ export async function savedConfiguration(shop: string) {
   const saved = await db.catalogSelection.findUnique({ where: { shop } });
   const selected = selectionIds(saved ? JSON.parse(saved.productIds) : []);
   return { selected, markup: markupPercent(saved?.markup ?? "0"),
-    markups: markupOverrides(JSON.parse(saved?.markups ?? "{}"), selected) };
+    markups: markupOverrides(JSON.parse(saved?.markups ?? "{}"), selected),
+    fulfillmentModes: fulfillmentModes(JSON.parse(saved?.fulfillmentModes ?? "{}"), selected) };
 }
 
 export async function savedSelection(shop: string) {
@@ -46,7 +54,7 @@ export async function savedSelection(shop: string) {
 }
 
 export async function createPreview(shop: string, markup: string, api: GraphQL, choices = { active: false, publish: false },
-  configuration?: { ids: number[]; markups: MarkupOverrides }, requestedPolicy?: ListingPolicy) {
+  configuration?: { ids: number[]; markups: MarkupOverrides; fulfillmentModes?: FulfillmentModes }, requestedPolicy?: ListingPolicy) {
   assertLabShop(shop);
   if (typeof choices.active !== "boolean" || typeof choices.publish !== "boolean" || (choices.publish && !choices.active)) {
     throw new ImportError("Publishing requires a valid Active import setting.");
@@ -56,6 +64,7 @@ export async function createPreview(shop: string, markup: string, api: GraphQL, 
   const policy = listingPolicy(requestedPolicy, ids);
   const normalized = markupPercent(markup);
   const overrides = markupOverrides(configuration?.markups ?? {}, ids);
+  const modes = fulfillmentModes(configuration?.fulfillmentModes ?? (configuration ? {} : (await savedConfiguration(shop)).fulfillmentModes), ids);
   const location = await shopContext(api, shop);
   const settings = importSettings(choices.active, choices.publish ? await onlineStorePublication(api) : null);
   const run = randomBytes(16).toString("hex");
@@ -72,6 +81,7 @@ export async function createPreview(shop: string, markup: string, api: GraphQL, 
     plan.items.push(...next.items);
   }
   for (const item of plan.items) {
+    if (modeFor(modes, item.supplierId) === "CATALOG") item.payload = catalogOnlyPayload(item.payload);
     if (overrides[item.supplierId] !== undefined) {
       item.payload.variants = item.payload.variants.map((variant, index) => ({
         ...variant, price: retailPrice(item.wholesale[index], overrides[item.supplierId]),
@@ -115,6 +125,10 @@ export async function createPreview(shop: string, markup: string, api: GraphQL, 
       if (binding?.enabled || binding?.status === "RUNNING") block("Pause inventory synchronization before reconnecting or replacing this listing.");
       else if (binding?.pending) block("An uncertain inventory correction remains pending. Reconcile it before replacing the inventory binding.");
     }
+    if (listing.action !== "BLOCKED" && claim && fulfillmentMode(claim.fulfillmentMode) !== modeFor(modes, item.supplierId)
+        && (binding?.enabled || binding?.status === "RUNNING" || binding?.pending)) {
+      block("Pause inventory sync and reconcile pending corrections before changing fulfillment mode. Retailer-managed inventory will not be overwritten.");
+    }
     if (!["BLOCKED", "RECREATE"].includes(listing.action) && target &&
         (policy.mode === "UPDATE" || policy.links[item.supplierId])) {
       await checkTargetClaims(shop, item.supplierId, target);
@@ -152,6 +166,7 @@ export async function createPreview(shop: string, markup: string, api: GraphQL, 
       items: { create: plan.items.map((item) => ({
         supplierId: item.supplierId, name: item.name, sku: item.sku,
         wholesale: JSON.stringify(item.wholesale), payload: JSON.stringify(item.payload),
+        fulfillmentMode: modeFor(modes, item.supplierId),
         productId: reviews.get(item.supplierId)!.listing.targetId,
         listing: JSON.stringify(reviews.get(item.supplierId)!.listing),
         listingWork: JSON.stringify(reviews.get(item.supplierId)!.work),
@@ -162,8 +177,8 @@ export async function createPreview(shop: string, markup: string, api: GraphQL, 
   return db.$transaction(async (transaction) => {
     await transaction.catalogSelection.upsert({
       where: { shop },
-      create: { shop, productIds: JSON.stringify(ids), markup: normalized, markups: JSON.stringify(overrides) },
-      update: { productIds: JSON.stringify(ids), markup: normalized, markups: JSON.stringify(overrides) },
+      create: { shop, productIds: JSON.stringify(ids), markup: normalized, markups: JSON.stringify(overrides), fulfillmentModes: JSON.stringify(modes) },
+      update: { productIds: JSON.stringify(ids), markup: normalized, markups: JSON.stringify(overrides), fulfillmentModes: JSON.stringify(modes) },
     });
     return transaction.importJob.create(input);
   });
@@ -174,7 +189,7 @@ export async function queueJob(shop: string, id: string, retry: boolean, confirm
   const job = await db.importJob.findFirst({ where: { id, shop }, include: { items: true } });
   if (!job || job.status !== (retry ? "FAILED" : "PREVIEW")) throw new ImportError("This job cannot be queued in its current state.");
   const policy = listingPolicy(JSON.parse(job.listingPolicy), selectionIds(JSON.parse(job.selection)));
-  if (confirmation !== listingConfirmation(job.active, job.publicationId, policy)) {
+  if (confirmation !== listingConfirmation(job.active, job.publicationId, policy, job.items)) {
     throw new ImportError("Confirm the saved import visibility settings before queueing.");
   }
   if (job.items.some((item) => review(item.listing, item.productId).action === "BLOCKED")) {
@@ -210,11 +225,13 @@ export async function importScreen(shop: string, id: string | null) {
     markups: overrides,
     listingPolicy: policy,
     ...importSettings(current.active, current.publicationId),
-    confirmation: listingConfirmation(current.active, current.publicationId, policy),
+    confirmation: listingConfirmation(current.active, current.publicationId, policy, current.items),
     error: current.error, generation: current.generation, cursor: current.cursor,
     items: current.items.map((item) => {
-      const input = payload(JSON.parse(item.payload), item.supplierId, current.id, current.locationId);
+      const mode = fulfillmentMode(item.fulfillmentMode);
+      const input = payload(JSON.parse(item.payload), item.supplierId, current.id, current.locationId, mode);
       return {
+        fulfillmentMode: mode,
         supplierId: item.supplierId, name: item.name, sku: item.sku, status: item.status,
         listing: review(item.listing, item.productId),
         markup: overrides[item.supplierId] ?? current.markup,
@@ -253,8 +270,19 @@ export async function runJob(id: string, shop: string, api: GraphQL, stopping: (
       await db.importItem.update({ where: { jobId_supplierId: { jobId: id, supplierId: item.supplierId } },
         data: { status: "RUNNING", error: null, attempts: { increment: 1 } } });
       try {
-        const input = payload(JSON.parse(item.payload), item.supplierId, id, job.locationId);
+        const mode = fulfillmentMode(item.fulfillmentMode);
+        const input = payload(JSON.parse(item.payload), item.supplierId, id, job.locationId, mode);
         let claim = await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId: item.supplierId } } });
+        const checkModeChange = async () => {
+          const currentClaim = await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId: item.supplierId } } });
+          if (currentClaim && fulfillmentMode(currentClaim.fulfillmentMode) !== mode) {
+            const binding = await db.inventorySync.findUnique({ where: { shop_supplierId: { shop, supplierId: item.supplierId } } });
+            if (binding?.enabled || binding?.status === "RUNNING" || binding?.pending) {
+              throw new ImportError("Pause and reconcile inventory before changing fulfillment mode.");
+            }
+          }
+        };
+        await checkModeChange();
         const listing = review(item.listing, item.productId);
         const work = JSON.parse(item.listingWork) as ListingWork;
         if (listing.action === "BLOCKED") throw new ImportError(listing.message || "This listing requires a fresh recovery preview.");
@@ -280,6 +308,7 @@ export async function runJob(id: string, shop: string, api: GraphQL, stopping: (
         if (listing.action === "LINK" || listing.action === "UPDATE") {
           assertClaim();
           if (listing.action === "LINK") await checkBinding();
+          await checkModeChange();
           await checkTargetClaims(shop, item.supplierId, listing.targetId!);
           const existing = matchProduct(listing.action === "LINK" ? products.filter((product) => product.id !== listing.targetId) : products, item.supplierId);
           if (existing && existing.id !== listing.targetId) throw new ImportError("Supplier identity moved to a different listing. No mutation was applied.");
@@ -299,7 +328,7 @@ export async function runJob(id: string, shop: string, api: GraphQL, stopping: (
             }
             const reserved = await transaction.importClaim.updateMany({
               where: { shop, supplierId: item.supplierId, productId: work.expectedProductId!, runId: work.expectedClaimRun! },
-              data: { runId: id, productId: null, mutationStartedAt: null },
+              data: { runId: id, productId: null, mutationStartedAt: null, deletedAt: null, listingCheckedAt: null },
             });
             if (reserved.count !== 1) throw new ImportError("Replacement claim changed concurrently. No creation was authorized.");
             work.replacementReserved = true;
@@ -324,6 +353,7 @@ export async function runJob(id: string, shop: string, api: GraphQL, stopping: (
           : await importDraft({
           api, products, input, supplierId: item.supplierId, runId: id,
           ...settings,
+          location: job.locationId,
           attempted: Boolean(claim?.mutationStartedAt),
           previouslyMapped: listing.action === "RECREATE" ? Boolean(claim?.productId) : Boolean(claim?.productId || item.productId),
           expectedProductId: claim?.productId || (listing.action === "RECREATE" ? null : item.productId),
@@ -332,7 +362,7 @@ export async function runJob(id: string, shop: string, api: GraphQL, stopping: (
             await db.$transaction([
               db.importClaim.upsert({
                 where: { shop_supplierId: { shop, supplierId: item.supplierId } },
-                create: { shop, supplierId: item.supplierId, runId: id, productId },
+                create: { shop, supplierId: item.supplierId, runId: id, productId, fulfillmentMode: mode },
                 update: { productId },
               }),
               db.importItem.update({ where: { jobId_supplierId: { jobId: id, supplierId: item.supplierId } }, data: { productId } }),
@@ -349,7 +379,7 @@ export async function runJob(id: string, shop: string, api: GraphQL, stopping: (
             }
             await db.importClaim.upsert({
               where: { shop_supplierId: { shop, supplierId: item.supplierId } },
-              create: { shop, supplierId: item.supplierId, runId: id }, update: {},
+              create: { shop, supplierId: item.supplierId, runId: id, fulfillmentMode: mode }, update: {},
             });
             const reserved = await db.importClaim.updateMany({
               where: { shop, supplierId: item.supplierId, mutationStartedAt: null, productId: null,
@@ -376,6 +406,14 @@ export async function runJob(id: string, shop: string, api: GraphQL, stopping: (
           }
         }
         await db.$transaction(async (transaction) => {
+          const currentClaim = await transaction.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId: item.supplierId } } });
+          if (currentClaim?.productId === result.productId && currentClaim.deletedAt) {
+            throw new ImportError("The Shopify listing was deleted during import. Create a fresh recovery review.");
+          }
+          if (currentClaim && fulfillmentMode(currentClaim.fulfillmentMode) !== mode) {
+            const binding = await transaction.inventorySync.findUnique({ where: { shop_supplierId: { shop, supplierId: item.supplierId } } });
+            if (binding?.enabled || binding?.status === "RUNNING" || binding?.pending) throw new ImportError("Inventory enrollment changed during fulfillment review. Pause and reconcile it.");
+          }
           if ((listing.action === "LINK" || listing.action === "RECREATE") && !bindingBaseline &&
               await transaction.inventorySync.findUnique({ where: { shop_supplierId: { shop, supplierId: item.supplierId } } })) {
             throw new ImportError("Inventory binding was added concurrently. Pause and reconcile it before continuing.");
@@ -394,16 +432,16 @@ export async function runJob(id: string, shop: string, api: GraphQL, stopping: (
               const updated = await transaction.importClaim.updateMany({
                 where: { shop, supplierId: item.supplierId, runId: work.expectedClaimRun,
                   productId: work.expectedProductId || null },
-                data: { productId: result.productId },
+                data: { productId: result.productId, fulfillmentMode: mode, deletedAt: null, listingCheckedAt: new Date() },
               });
               if (updated.count !== 1) throw new ImportError("Supplier mapping changed during listing work. Completed Shopify operations require reconciliation.");
             } else {
-              await transaction.importClaim.create({ data: { shop, supplierId: item.supplierId, runId: id, productId: result.productId } });
+              await transaction.importClaim.create({ data: { shop, supplierId: item.supplierId, runId: id, productId: result.productId, fulfillmentMode: mode } });
             }
           } else await transaction.importClaim.upsert({
             where: { shop_supplierId: { shop, supplierId: item.supplierId } },
-            create: { shop, supplierId: item.supplierId, runId: id, productId: result.productId },
-            update: { productId: result.productId },
+            create: { shop, supplierId: item.supplierId, runId: id, productId: result.productId, fulfillmentMode: mode },
+            update: { productId: result.productId, fulfillmentMode: mode, deletedAt: null, listingCheckedAt: new Date() },
           });
           await transaction.importItem.update({ where: { jobId_supplierId: { jobId: id, supplierId: item.supplierId } }, data: { ...result, error: null } });
         });
