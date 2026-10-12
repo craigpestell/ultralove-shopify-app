@@ -31,6 +31,33 @@ listings deleted. Failed verification is logged and retried after five minutes.
 Deploying app code alone does not register an app-configuration subscription;
 verify the deletion callback separately as part of rollout.
 
+### Deleted-listing lifecycle deployment, 2026-10-11
+
+Release `364dad4776824ecbf346658d4f14f73f2d512658` is committed locally and
+deployed from its exact git archive to the integration lab. It also corrects
+completed listing comparisons to show applied changes with Before/After labels.
+All 76 tests, typecheck, lint and app/worker builds passed on the deployment host.
+Migration `20261012034000_deleted_listings` is applied; no migrations remain pending.
+
+The shop-specific `PRODUCTS_DELETE` subscription is registered for the existing
+app URL's `/webhooks/products/delete` callback. A signed duplicate delivery for
+an already archived mapping returned 200 without changing its mapping or stock
+record; an invalid signature returned 401. All 227 saved mapped IDs were checked.
+Inventory now contains 1 current entry and 223 deleted/archived entries out of
+224 completed-import entries. No product was recreated, published or enrolled.
+
+SQLite integrity and foreign keys passed. Comparison with the protected baseline
+preserved all 41 jobs, 1,763 items, 227 historical claims, saved selection/pricing,
+and the identities, mappings, checkpoints and protected corrections of all 112
+inventory rows. HTTPS returned 200; app, worker and Nginx are active, with no worker
+errors observed after restart. Deployed source hashes match the release.
+
+The protected deployment backup is `20261012T035032229881Z.sqlite`; the preflight
+baseline is `deleted-listings-baseline-20261012T0348Z.sqlite` (0600). The previous
+release and rollback symlink point to `5fbb5cb7ba26266db1d2765385ed5ff1fb849952`.
+No GitHub push, Shopify app-wide configuration deployment, scope changes or
+WordPress/production deployment was performed.
+
 The embedded catalog browser and saved selections are deployed and connected
 to the real development feed.
 The interface accepts only
