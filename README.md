@@ -274,6 +274,9 @@ due time, mapped variant count and explicit errors/review warnings.
 
 Corrections set **on-hand** supplier stock using compare-and-set, preserving
 Shopify committed order reservations rather than resetting available stock.
+The pinned Admin API uses `changeFromQuantity` for the compare-and-set input.
+Saved corrections retain their internal `compareQuantity` field and are
+translated only at the API boundary, preserving their quantities and retry keys.
 Unknown, unmanaged, shared, out-of-stock, missing or withdrawn supplier stock
 becomes zero. Missing mapped variants are not deleted, and new supplier variants
 require separate review/import. Stock below committed orders produces a review

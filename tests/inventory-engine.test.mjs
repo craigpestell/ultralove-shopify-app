@@ -57,8 +57,11 @@ test("stock mutations use persisted idempotency and compare-and-set with a maxim
     quantities: stockPlan(current, inventoryFeed(source, 100, null), location).changed };
   await setStock(async (query, variables) => {
     assert.equal(query, INVENTORY_SET_MUTATION);
-    assert.deepEqual(variables, { input, key });
+    assert.deepEqual(variables, { input: { ...input, quantities: input.quantities.map(({ compareQuantity, ...quantity }) => ({
+      ...quantity, changeFromQuantity: compareQuantity,
+    })) }, key });
     assert.ok(!("ignoreCompareQuantity" in variables.input));
+    assert.ok(variables.input.quantities.every((quantity) => !("compareQuantity" in quantity)));
     return { data: { inventorySetQuantities: { inventoryAdjustmentGroup: { referenceDocumentUri: input.referenceDocumentUri }, userErrors: [] } } };
   }, input, key);
   await assert.rejects(setStock(async () => ({ data: { inventorySetQuantities: {

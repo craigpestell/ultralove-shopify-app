@@ -230,7 +230,11 @@ export function stockOperation(value: unknown): StockOperation {
 export async function setStock(api: GraphQL, value: StockOperation, key: string) {
   if (!/^[a-f0-9]{32}$/.test(key)) throw new InventoryError("Invalid persisted inventory idempotency key.");
   const input = stockOperation(value);
-  const result = object((await request(api, INVENTORY_SET_MUTATION, { input, key })).inventorySetQuantities);
+  // Preserve saved corrections while adapting the renamed Shopify API field.
+  const requestInput = { ...input, quantities: input.quantities.map(({ compareQuantity, ...quantity }) => ({
+    ...quantity, changeFromQuantity: compareQuantity,
+  })) };
+  const result = object((await request(api, INVENTORY_SET_MUTATION, { input: requestInput, key })).inventorySetQuantities);
   const errors = list(result.userErrors);
   if (errors.length) throw new InventoryMutationError(`Shopify rejected the stock correction: ${errors.map((entry) => text(object(entry).message)).join("; ")}`);
   if (object(result.inventoryAdjustmentGroup).referenceDocumentUri !== input.referenceDocumentUri) {

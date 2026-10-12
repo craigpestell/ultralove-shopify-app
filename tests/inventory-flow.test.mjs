@@ -116,7 +116,10 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
       assert.ok(variables.input.quantities.length <= 250);
       const persisted = await db.inventorySync.findFirst({ where: { pendingKey: variables.key } });
       assert.ok(persisted?.pendingAt, "persist key, input and timestamp before sending any stock mutation");
-      assert.deepEqual(JSON.parse(persisted.pending), variables.input);
+      const savedInput = JSON.parse(persisted.pending);
+      assert.deepEqual({ ...savedInput, quantities: savedInput.quantities.map(({ compareQuantity, ...quantity }) => ({
+        ...quantity, changeFromQuantity: compareQuantity,
+      })) }, variables.input);
       if (responses.has(variables.key)) {
         assert.deepEqual(responses.get(variables.key).input, variables.input, "a retry must use the exact same mutation input");
         return responses.get(variables.key).body;
@@ -127,7 +130,8 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
       }
       for (const quantity of variables.input.quantities) {
         const item = [...products.values()].flatMap((product) => product.nodes).find((node) => node.inventoryItem.id === quantity.inventoryItemId).inventoryItem;
-        assert.equal(quantity.compareQuantity, item.onHand);
+        assert.ok(!("compareQuantity" in quantity), "the deprecated comparison field must not reach Shopify");
+        assert.equal(quantity.changeFromQuantity, item.onHand);
         assert.equal(quantity.locationId, location);
         item.onHand = quantity.quantity;
       }
