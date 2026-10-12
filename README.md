@@ -154,6 +154,12 @@ rather than published. Its selected-detail batch fails explicitly and retains
 the selection. Remove or republish this product before previewing the entire
 saved batch; deployment deliberately does not alter supplier publication or
 discard saved selections. The other selected-detail batches load normally.
+The restricted supplier proxy reports this known rejection using the bounded
+`409 / SELECTED_PRODUCT_UNAVAILABLE` envelope, not arbitrary exception text.
+The app explains that a selected product or variant is no longer published or
+available instead of presenting it as a temporary connection outage.
+Genuine transport failures and the existing bounded rate-limit handling remain
+unchanged; no partial selection or import data is accepted.
 
 Polaris validation passed for the catalog, review and recovery components.
 The inventory route's standalone toolkit validator cannot resolve the existing

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { PassThrough } from "node:stream";
-import { CatalogError, inventoryState, inventoryStates, productsPage, categoriesPage, selectedProducts, validateSelection } from "../app/catalog.server.ts";
+import { CatalogError, importPlan, inventoryState, inventoryStates, productsPage, categoriesPage, selectedProducts, validateSelection } from "../app/catalog.server.ts";
 
 const product = {
   id: 1, parent_id: 0, name: "Supplier product", sku: "SKU-1", type: "simple",
@@ -175,11 +175,22 @@ test("restricted inventory transport accepts only bounded structured rate-limit 
       ['{"error":{"status":500,"retryAfter":3600}}', null],
       ["not JSON", null],
       ["", null],
+      ['{"error":{"status":500,"code":"SELECTED_PRODUCT_UNAVAILABLE"}}', null],
+      ['{"error":{"status":409,"code":"UNTRUSTED_MESSAGE","message":"private supplier details"}}', null],
     ]) {
       output = body;
       await assert.rejects(inventoryState(100, null), (error) =>
         error instanceof CatalogError && error.retryAfter === delay &&
         (delay === null ? /unavailable/.test(error.message) : /3600 seconds/.test(error.message)));
+    }
+    output = '{"error":{"status":409,"code":"SELECTED_PRODUCT_UNAVAILABLE"}}';
+    for (const operation of [
+      () => selectedProducts([68951]),
+      () => validateSelection([68951]),
+      () => importPlan([68951], "gid://shopify/Location/1", "a".repeat(32), "25.00"),
+    ]) {
+      await assert.rejects(operation(), error => error instanceof CatalogError && error.retryAfter === null &&
+        /no longer published or available/.test(error.message) && !/connection is unavailable/.test(error.message));
     }
   } finally {
     context.mock.restoreAll();
