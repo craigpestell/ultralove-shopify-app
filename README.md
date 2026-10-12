@@ -59,8 +59,9 @@ Existing `/app/imports` bookmarks redirect to `/app` with their job and embedded
 authentication query context retained; legacy preview/queue/retry forms remain
 supported. The task-oriented redesign, with uncapped product selections and
 reviewed existing-listing updates/recovery, is deployed to the integration lab
-as release `155cc24`, including selection search/pagination and asynchronous
-image-readiness waiting before publication.
+as release `12162e9`, including selection/review search and pagination,
+HTML-normalized update verification and asynchronous image-readiness waiting
+before publication.
 
 The feed-selection catalog rows show the first supplier product image as a
 48-pixel thumbnail. Hover, focus with the keyboard, or tap/click the thumbnail
@@ -727,6 +728,49 @@ The previous app release and rollback symlink point to
 Shopify app configuration and scopes were unchanged. Verification queued no
 live imports and performed no product mutations.
 
+### Description verification and paginated review deployment, 2026-10-11
+
+Release `12162e9e3c80a25c9f03dab6d95cd2f866f1b521` was committed, pushed
+and deployed from its exact archive to the isolated integration lab. GitHub
+App checks passed (run `38186095556`).
+
+Read-only comparison covered all 151 description-verification failures in the
+affected UPDATE job. Every raw description differed from Shopify's stored
+serialization, but every pair matched after HTML5 parsing, sorted attributes
+and removal of non-rendering indentation in plain list/table containers.
+Title/vendor comparisons and meaningful text, attributes, formatting, URLs,
+inline spacing and preformatted whitespace remain protected. The two separate
+Shopify media-processing failures are genuine and were not masked or repaired.
+No WordPress description cleanup or supplier/proxy change was made.
+
+Pricing snapshots, results and connection recovery now show 25 searchable
+products per page. Confirmation/retry sits before the results table; the fresh
+connection-review action precedes connection fields. Filtering never limits
+the immutable job or discards off-page connection edits.
+
+All 71 tests, typecheck, lint and app/worker builds passed locally, in CI and
+on the deployment host. Both changed UI components passed Polaris App Home
+v1 validation. The synthetic 300-product browser fixture verified off-page
+search, pagination, attention filtering, preserved connection edits and complete
+300-product fresh-review, import and retry scope while only one result was
+visible. Desktop and 390-CSS-pixel mobile layouts had no horizontal overflow.
+The fixture was stopped afterward; its jobs and mutations were not live.
+
+HTTPS returned 200; app, worker and Nginx were active. Deployed source hashes
+matched the committed files. No migrations were pending. SQLite integrity and
+foreign keys passed, with exact preservation of all 33 jobs, 1,352 items,
+207 creation claims and saved selection/pricing, plus stable inventory
+identities, mappings, locations, enablement and revisions. No live imports were
+queued by verification. Historical failures remain until an explicit retry or
+fresh review; expired UPDATE snapshots require a fresh review.
+
+The protected deployment backup is `20261011T235609205878Z.sqlite` (0600).
+The preflight snapshot is `html-review-baseline-20261011T235523Z.sqlite` (0600).
+The previous release and rollback symlink point to
+`155cc24dc13ee4d5db6c0c501457ca5c61483d0c`. Production, Shopify app configuration
+and scopes remain unchanged. The two pre-existing inventory-response failures
+remain outside this release.
+
 ## Existing Shopify app
 
 Verified in the Dev Dashboard on 2026-10-09:
@@ -823,7 +867,7 @@ and approval.
 
 ## Current host and rollback
 
-The deployed release is `155cc24` on the isolated integration-lab
+The deployed release is `12162e9` on the isolated integration-lab
 droplet. Node 24.21.0 runs as `ultralove-shopify` on `127.0.0.1:3097`,
 proxied by its separate HTTPS Nginx vhost. Source is under
 `/srv/ultralove-shopify/releases`; `current` selects the release.
