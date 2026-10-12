@@ -59,7 +59,9 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
     let mutations = 0;
     let mutationRequests = 0;
     let loseResponse = false;
+    let loseBeforeMutation = false;
     let rejectMutation = false;
+    const mutationKeys = [];
     const seed = async (id, sources) => {
       const run = id.toString(16).padStart(32, "0");
       const productId = `gid://shopify/Product/${id}`;
@@ -111,6 +113,7 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
       }
       assert.equal(query, INVENTORY_SET_MUTATION, "no product/content/publication/order mutations are allowed");
       mutationRequests++;
+      mutationKeys.push(variables.key);
       assert.equal(variables.input.name, "on_hand");
       assert.deepEqual(Object.keys(variables.input).sort(), ["name", "quantities", "reason", "referenceDocumentUri"]);
       assert.ok(variables.input.quantities.length <= 250);
@@ -120,6 +123,7 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
       assert.deepEqual({ ...savedInput, quantities: savedInput.quantities.map(({ compareQuantity, ...quantity }) => ({
         ...quantity, changeFromQuantity: compareQuantity,
       })) }, variables.input);
+      if (loseBeforeMutation) { loseBeforeMutation = false; throw new Error("Lost connection before stock correction"); }
       if (responses.has(variables.key)) {
         assert.deepEqual(responses.get(variables.key).input, variables.input, "a retry must use the exact same mutation input");
         return responses.get(variables.key).body;
@@ -175,7 +179,7 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
     assert.equal(state.cursor, 9);
     assert.equal(state.pending, null);
     assert.equal(mutations, 1, "restart/retry does not apply an uncertain successful correction twice");
-    assert.equal(mutationRequests, 2);
+    assert.equal(mutationRequests, 1, "Shopify confirms the pending quantities without replaying an already-applied write");
     assert.deepEqual(feed.reads.at(-1).checkpoint, null, "failed cycles must not advance the checkpoint");
 
     await inventoryControl(shop, 100, "pause", api);
@@ -266,6 +270,19 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
     assert.match(html, /Sync now/);
     assert.match(html, /Shopify order reservations remain in place/);
     assert.match(html, /251 mapped variants/);
+    await seed(400, [601]);
+    feed.value = source(400, [601]);
+    await inventoryControl(shop, 400, "enable", api, "inventory-only");
+    loseBeforeMutation = true;
+    await runInventoryCycle(shop, 400, api);
+    const unsent = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 400 } } });
+    assert.ok(unsent.pendingKey);
+    assert.equal(products.get("gid://shopify/Product/400").nodes[0].inventoryItem.onHand, 4);
+    await inventoryControl(shop, 400, "sync-now", api);
+    await runInventoryCycle(shop, 400, api);
+    assert.equal((await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 400 } } })).status, "SYNCED");
+    assert.deepEqual(mutationKeys.slice(-2), [unsent.pendingKey, unsent.pendingKey],
+      "unconfirmed quantities still retry the exact persisted correction key and input");
     await seed(300, [501]);
     feed.value = source(300, [501]);
     await inventoryControl(shop, 300, "enable", api, "inventory-only");
@@ -299,7 +316,7 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
     const recovered = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 300 } } });
     assert.equal(recovered.status, "SYNCED");
     assert.equal(recovered.pendingKey, null);
-    assert.equal(mutationRequests, beforeMissing.requests + 1, "explicit recovery reconciles the exact saved correction");
+    assert.equal(mutationRequests, beforeMissing.requests, "explicit recovery verifies already-applied quantities without resending");
     assert.equal(mutations, mutationSizes.length, "idempotent recovery does not apply a correction twice");
     auth.rejected = true;
     await assert.rejects(loader({ request: new Request("https://app.example/app/inventory") }), (error) => error.status === 403);

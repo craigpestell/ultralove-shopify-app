@@ -288,7 +288,10 @@ stock snapshot. Expired cursors/generation changes require a verified resnapshot
 Checkpoints advance only after all corrections and final Shopify verification.
 Each mutation has at most 250 quantities; products have at most 2048 variants.
 Pending input, idempotency key and timestamp are saved before sending. A lost
-response or restart retries the identical correction; a confirmed rejection
+response or restart first checks whether Shopify already has every pending
+on-hand quantity. Confirmed quantities clear the pending record without
+repeating a stock write; otherwise the identical correction is retried.
+A confirmed rejection
 allows a fresh compare-and-set next cycle. Uncertain requests older than Shopify's
 24-hour idempotency window pause for explicit stock review and re-enrollment.
 Supplier rate-limit responses delay scheduling by at least their `Retry-After`.

@@ -105,11 +105,14 @@ export async function runInventoryCycle(shop: string, supplierId: number, api: G
       where: { shop, supplierId, enabled: true, revision: saved.revision, status: "RUNNING" },
       select: { supplierId: true },
     }));
-    const apply = async (input: StockOperation, key: string) => {
+    const assertOperation = (input: StockOperation) => {
       if (input.quantities.some((item) => item.locationId !== saved.locationId ||
           !expected.some((mapping) => mapping.inventoryItemId === item.inventoryItemId))) {
         throw new InventoryError("Pending inventory correction is outside the approved mapping.");
       }
+    };
+    const apply = async (input: StockOperation, key: string) => {
+      assertOperation(input);
       if (!await allowed()) return false;
       try {
         await setStock(api, input, key);
@@ -133,7 +136,14 @@ export async function runInventoryCycle(shop: string, supplierId: number, api: G
         });
         return;
       }
-      if (!await apply(stockOperation(JSON.parse(saved.pending)), saved.pendingKey)) return;
+      const pending = stockOperation(JSON.parse(saved.pending));
+      assertOperation(pending);
+      if (pending.quantities.every((quantity) =>
+        current.find((item) => item.inventoryItemId === quantity.inventoryItemId)?.onHand === quantity.quantity)) {
+        if (!await allowed()) return;
+        await db.inventorySync.updateMany({ where: { shop, supplierId, pendingKey: saved.pendingKey },
+          data: { pending: null, pendingKey: null, pendingAt: null } });
+      } else if (!await apply(pending, saved.pendingKey)) return;
       current = await remoteInventory(api, saved.productId, supplierId, saved.locationId);
       verifyMappings(expected, current);
     }
