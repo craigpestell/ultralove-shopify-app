@@ -5,8 +5,10 @@ import { LAB_SHOP, assertLabShop } from "./lab-policy.server";
 import { runJob } from "./imports.server";
 import { runInventoryBatch } from "./inventory.server";
 import { INVENTORY_INTERVAL, INVENTORY_PRODUCT_BATCH_SIZE } from "./inventory-engine";
+import { LISTING_CHECK_INTERVAL, verifyImportedListings } from "./listing-lifecycle.server";
 
 let stopping = false;
+let listingRetryAt = 0;
 process.on("SIGTERM", () => { stopping = true; });
 process.on("SIGINT", () => { stopping = true; });
 
@@ -30,6 +32,24 @@ while (!stopping) {
         error: "Shopify access could not be established. Reopen the app, then retry the job." } });
     }
   } else {
+    const listing = Date.now() >= listingRetryAt && await db.importClaim.findFirst({
+      where: { shop: LAB_SHOP, productId: { not: null }, deletedAt: null,
+        OR: [{ listingCheckedAt: null }, { listingCheckedAt: { lte: new Date(Date.now() - LISTING_CHECK_INTERVAL) } }] },
+      select: { supplierId: true },
+    });
+    if (listing) {
+      try {
+        const { admin, session } = await shopify.unauthenticated.admin(LAB_SHOP);
+        assertLabShop(session.shop);
+        await verifyImportedListings(LAB_SHOP, async (query, variables) => {
+          const response = await admin.graphql(query, { variables, tries: 1 });
+          return response.json();
+        });
+      } catch (error) {
+        console.error("Imported listing verification failed.", error instanceof Error ? error.message : "Unknown failure");
+        listingRetryAt = Date.now() + LISTING_CHECK_INTERVAL;
+      }
+    }
     const sync = await db.inventorySync.findMany({ where: { shop: LAB_SHOP, enabled: true, nextRunAt: { lte: new Date() }, status: { not: "RUNNING" } },
       orderBy: [{ nextRunAt: "asc" }, { supplierId: "asc" }], take: INVENTORY_PRODUCT_BATCH_SIZE });
     if (!sync.length) {

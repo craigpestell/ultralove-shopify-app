@@ -132,6 +132,9 @@ expire after ten minutes; create a fresh preview if needed.
 Open **Imports** and choose an entry in **Recent activity**.
 
 - Review completed products, warnings and any unfinished items.
+- Completed listing updates show **applied changes** with **Before** and **After**
+  values from the saved snapshot, not pending proposals or a live Shopify comparison.
+  Unfinished items retain their proposed changes until completion.
 - Use **Open in Shopify (new tab)** to inspect an individual listing.
 - Search or page through the results.
 - Where permitted, **Retry unfinished items** reconciles unfinished work;
@@ -157,9 +160,18 @@ scheduled about every five minutes, with queued imports taking priority.
 - **Pause sync** prevents new updates; an update already sent may finish.
 - Sync updates supplier-backed on-hand stock, while retaining Shopify order
   reservations. It does not change retail prices, descriptions or publication.
-- If a linked Shopify listing is missing, sync pauses in **Needs review**.
-  Recovery requires a reviewed reconnection or replacement and explicit
-  re-enrollment.
+- If a Shopify product is deleted, its entry moves to **Deleted / archived**.
+  Supplier sync stops, and the product is excluded from current inventory counts
+  and **Enable all**. Import history and protected stock-correction records remain.
+  Deletion notifications and background verification (about every five minutes,
+  in bounded batches) cover catalog-only and unenrolled products too. API errors
+  do not mark products deleted.
+- In **Deleted / archived**, choose **Recover deleted listing** to review a
+  re-import as a new unpublished draft, or provide a Shopify product URL/ID to
+  review a connection to an existing product. These actions create a fresh
+  review for that product and replace the working selection; they do not import
+  anything until confirmed. Pending stock corrections require reconciliation
+  before remapping. Dropshipping sync requires explicit re-enrollment afterward.
 
 Removing a product from a working catalog selection does not automatically
 pause its inventory sync.

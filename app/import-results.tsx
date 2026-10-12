@@ -116,7 +116,9 @@ export default function ImportResults({ job, history, ids, markup, markups, fulf
         <table>
           <caption>Exact variant prices in CAD. This snapshot cannot be edited.</caption>
           <thead><tr><th scope="col">Product</th><th scope="col">Markup</th><th scope="col">Wholesale</th><th scope="col">Retail</th><th scope="col">Result / review</th></tr></thead>
-          <tbody>{visible.map((item) => <tr key={item.supplierId}>
+          <tbody>{visible.map((item) => {
+            const changesApplied = ["UPDATED", "LINKED"].includes(item.status);
+            return <tr key={item.supplierId}>
             <td><strong>{supplierText(item.name)}</strong><small>{item.sku || "Review variant SKUs"} · {item.variantCount} variant(s)</small>
               <small>{fulfillmentLabel(item.fulfillmentMode)}</small>
               {item.fulfillmentMode === "CATALOG" && <small>No supplier quantities imported; supplier sync unavailable.</small>}</td>
@@ -131,14 +133,17 @@ export default function ImportResults({ job, history, ids, markup, markups, fulf
               {item.warnings.length > 0 && <details><summary>Review {item.warnings.length} warning(s)</summary><ul>{item.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></details>}
               {item.error && <p role="alert">{item.error}</p>}
               {item.listing.message && <p>{item.listing.message}</p>}
-              {!!item.listing.changes.length && <details><summary>Review {item.listing.changes.length} proposed change(s)</summary>
+              {!!item.listing.changes.length && <details><summary>{changesApplied
+                ? `${item.listing.changes.length} applied change(s)`
+                : `Review ${item.listing.changes.length} proposed change(s)`}</summary>
                 <dl>{item.listing.changes.map((change, index) => <div key={`${change.field}:${index}`}>
-                  <dt><strong>{change.field}</strong></dt><dd><small>Current</small><pre>{change.before || "(empty)"}</pre>
-                    <small>Proposed</small><pre>{change.after || "(empty)"}</pre></dd>
+                  <dt><strong>{change.field}</strong></dt><dd><small>{changesApplied ? "Before" : "Current"}</small><pre>{change.before || "(empty)"}</pre>
+                    <small>{changesApplied ? "After" : "Proposed"}</small><pre>{change.after || "(empty)"}</pre></dd>
                 </div>)}</dl>
               </details>}
             </td>
-          </tr>)}</tbody>
+          </tr>;
+          })}</tbody>
         </table>
       </div>
       {!items.length && attentionOnly && <p>No products need review in this job. Clear the filter to see all results.</p>}

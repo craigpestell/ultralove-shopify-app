@@ -328,7 +328,7 @@ export async function runJob(id: string, shop: string, api: GraphQL, stopping: (
             }
             const reserved = await transaction.importClaim.updateMany({
               where: { shop, supplierId: item.supplierId, productId: work.expectedProductId!, runId: work.expectedClaimRun! },
-              data: { runId: id, productId: null, mutationStartedAt: null },
+              data: { runId: id, productId: null, mutationStartedAt: null, deletedAt: null, listingCheckedAt: null },
             });
             if (reserved.count !== 1) throw new ImportError("Replacement claim changed concurrently. No creation was authorized.");
             work.replacementReserved = true;
@@ -407,6 +407,9 @@ export async function runJob(id: string, shop: string, api: GraphQL, stopping: (
         }
         await db.$transaction(async (transaction) => {
           const currentClaim = await transaction.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId: item.supplierId } } });
+          if (currentClaim?.productId === result.productId && currentClaim.deletedAt) {
+            throw new ImportError("The Shopify listing was deleted during import. Create a fresh recovery review.");
+          }
           if (currentClaim && fulfillmentMode(currentClaim.fulfillmentMode) !== mode) {
             const binding = await transaction.inventorySync.findUnique({ where: { shop_supplierId: { shop, supplierId: item.supplierId } } });
             if (binding?.enabled || binding?.status === "RUNNING" || binding?.pending) throw new ImportError("Inventory enrollment changed during fulfillment review. Pause and reconcile it.");
@@ -429,7 +432,7 @@ export async function runJob(id: string, shop: string, api: GraphQL, stopping: (
               const updated = await transaction.importClaim.updateMany({
                 where: { shop, supplierId: item.supplierId, runId: work.expectedClaimRun,
                   productId: work.expectedProductId || null },
-                data: { productId: result.productId, fulfillmentMode: mode },
+                data: { productId: result.productId, fulfillmentMode: mode, deletedAt: null, listingCheckedAt: new Date() },
               });
               if (updated.count !== 1) throw new ImportError("Supplier mapping changed during listing work. Completed Shopify operations require reconciliation.");
             } else {
@@ -438,7 +441,7 @@ export async function runJob(id: string, shop: string, api: GraphQL, stopping: (
           } else await transaction.importClaim.upsert({
             where: { shop_supplierId: { shop, supplierId: item.supplierId } },
             create: { shop, supplierId: item.supplierId, runId: id, productId: result.productId, fulfillmentMode: mode },
-            update: { productId: result.productId, fulfillmentMode: mode },
+            update: { productId: result.productId, fulfillmentMode: mode, deletedAt: null, listingCheckedAt: new Date() },
           });
           await transaction.importItem.update({ where: { jobId_supplierId: { jobId: id, supplierId: item.supplierId } }, data: { ...result, error: null } });
         });

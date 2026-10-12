@@ -88,7 +88,7 @@ export function statusLabel(status: string): string {
   return ({
     PREVIEW: "Awaiting confirmation", QUEUED: "Queued", RUNNING: "In progress", COMPLETE: "Completed",
     FAILED: "Needs attention", CREATED: "Created", REUSED: "Existing listing kept", UPDATED: "Updated from UltraLove", LINKED: "Existing listing connected",
-    NOT_ENROLLED: "Sync off", PAUSED: "Paused", ENABLED: "Sync on", IDLE: "Sync on", SYNCED: "Up to date", REVIEW: "Review required",
+    NOT_ENROLLED: "Sync off", PAUSED: "Paused", ENABLED: "Sync on", IDLE: "Sync on", SYNCED: "Up to date", REVIEW: "Review required", DELETED: "Deleted in Shopify",
   } as Record<string, string>)[status] ?? status.toLowerCase().replaceAll("_", " ");
 }
 

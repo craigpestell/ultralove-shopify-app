@@ -34,6 +34,9 @@ test("listing review shows selected updates, immutable differences and actionabl
     const updated = await render(job);
     assert.match(updated, /Update selected fields/);
     assert.match(updated, /Retailer title/);
+    assert.match(updated, /Review 1 proposed change\(s\)/);
+    assert.match(updated, /<small>Current<\/small>/);
+    assert.match(updated, /<small>Proposed<\/small>/);
     assert.match(updated, /&lt;b&gt;Supplier title&lt;\/b&gt;/, "supplier HTML is displayed as text, not injected");
     assert.match(updated, /preserve their publication and inventory/);
     assert.doesNotMatch(updated, /Not applied to existing listing/);
@@ -65,6 +68,30 @@ test("listing review shows selected updates, immutable differences and actionabl
     const completed = await render({ ...job, status: "COMPLETE", items: [{ ...job.items[0], status: "UPDATED" }] });
     assert.match(completed, /1 of 1 products completed/);
     assert.match(completed, /Updated from UltraLove/);
+    assert.match(completed, /1 applied change\(s\)/);
+    assert.match(completed, /<small>Before<\/small>/);
+    assert.match(completed, /<small>After<\/small>/);
+    assert.doesNotMatch(completed, /proposed change|<small>Current<\/small>|<small>Proposed<\/small>/);
+    for (const status of ["RUNNING", "FAILED", "COMPLETE"]) {
+      for (const itemStatus of ["UPDATED", "LINKED"]) {
+        const applied = await render({ ...job, status, items: [{ ...job.items[0], status: itemStatus,
+          listing: { ...job.items[0].listing, action: itemStatus === "LINKED" ? "LINK" : "UPDATE",
+            changes: [
+              { field: "Product name", before: "2455  The Ultimate Kiss  Oral Lovemaking Book WHILE STOCK LASTS",
+                after: "2455 The Ultimate Kiss Oral Lovemaking Book" },
+              { field: "Add supplier image", before: "", after: "https://ultralove.ca/wp-content/uploads/2021/04/products-2455.jpg" },
+            ] } }] });
+        assert.match(applied, /2 applied change\(s\)/);
+        assert.match(applied, /<small>Before<\/small><pre>\(empty\)<\/pre>/);
+        assert.match(applied, /<small>After<\/small><pre>https:\/\/ultralove.ca\/wp-content\/uploads\/2021\/04\/products-2455.jpg<\/pre>/);
+        assert.doesNotMatch(applied, /proposed change|<small>Current<\/small>|<small>Proposed<\/small>/);
+      }
+    }
+    for (const itemStatus of ["PENDING", "RUNNING", "FAILED"]) {
+      const unfinished = await render({ ...job, status: "FAILED", items: [{ ...job.items[0], status: itemStatus }] });
+      assert.match(unfinished, /Review 1 proposed change\(s\)/);
+      assert.doesNotMatch(unfinished, /applied change/);
+    }
     const expiredUpdate = await render({ ...job, status: "FAILED",
       createdAt: new Date(Date.now() - 11 * 60 * 1000).toISOString(),
       items: [{ ...job.items[0], status: "FAILED", error: "Listing snapshot expired." }] });

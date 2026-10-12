@@ -11,6 +11,26 @@ the guide intentionally contains no passwords or private credentials.
 
 ## Status
 
+### Deleted Shopify listings
+
+Inventory keeps deleted-listing history in a **Deleted / archived** view rather
+than displaying it as current stock. A retained `ImportClaim.deletedAt` timestamp
+stops supplier sync, excludes the listing from current counts and bulk enrollment,
+and preserves import history, creation guards and uncertain stock corrections.
+Recovery creates a separately confirmed preview for a new unpublished draft or
+an explicitly connected existing listing. Supplier sync remains opt-in afterward.
+
+Deploy migration `20261012034000_deleted_listings` with the app and worker.
+Deploy/register the `products/delete` subscription in `shopify.app.toml`, or
+register its shop-specific callback through the Admin API, to enable prompt signed
+deletion notifications. The worker also checks all current mapped
+listings, including catalog-only and unenrolled products, about every five minutes
+in batches of at most 50 IDs. This backfills deletions predating the webhook.
+GraphQL errors, transport failures and malformed/partial responses never mark
+listings deleted. Failed verification is logged and retried after five minutes.
+Deploying app code alone does not register an app-configuration subscription;
+verify the deletion callback separately as part of rollout.
+
 The embedded catalog browser and saved selections are deployed and connected
 to the real development feed.
 The interface accepts only

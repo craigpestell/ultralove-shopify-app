@@ -11,13 +11,16 @@ import {
 } from "./inventory-engine";
 import type { InventoryFeed, InventoryRead, Mapping, RemoteInventory, StockOperation } from "./inventory-engine";
 import { fulfillmentMode } from "./fulfillment-policy";
+import { markListingDeleted } from "./listing-lifecycle.server";
+import { markupPercent } from "./pricing-policy";
 
 export async function inventoryScreen(shop: string) {
   assertLabShop(shop);
   const [claims, items, states] = await Promise.all([
     db.importClaim.findMany({ where: { shop, productId: { not: null } }, orderBy: { supplierId: "asc" } }),
     db.importItem.findMany({ where: { job: { shop }, status: { in: ["CREATED", "REUSED", "UPDATED", "LINKED"] }, productId: { not: null } },
-      orderBy: { job: { createdAt: "desc" } }, select: { supplierId: true, productId: true, name: true, sku: true } }),
+      orderBy: { job: { createdAt: "desc" } }, select: { supplierId: true, productId: true, name: true, sku: true,
+        job: { select: { markup: true, markups: true } } } }),
     db.inventorySync.findMany({ where: { shop } }),
   ]);
   const latestItems = new Map<string, (typeof items)[number]>();
@@ -33,10 +36,12 @@ export async function inventoryScreen(shop: string) {
     return [{
       supplierId: claim.supplierId, productId: claim.productId, name: item.name, sku: item.sku,
       fulfillmentMode: fulfillmentMode(claim.fulfillmentMode),
-      enabled: state?.enabled || false, status: state?.status || "NOT_ENROLLED",
+      deletedAt: claim.deletedAt?.toISOString() || null,
+      markup: markupPercent(JSON.parse(item.job.markups)[claim.supplierId] ?? item.job.markup),
+      enabled: !claim.deletedAt && (state?.enabled || false), status: claim.deletedAt ? "DELETED" : state?.status || "NOT_ENROLLED",
       error: state?.error || null, variantCount: state ? mappings(JSON.parse(state.mappings)).length : null,
       lastSuccessAt: state?.lastSuccessAt?.toISOString() || null,
-      nextRunAt: state?.enabled ? state.nextRunAt.toISOString() : null,
+      nextRunAt: !claim.deletedAt && state?.enabled ? state.nextRunAt.toISOString() : null,
     }];
   });
 }
@@ -82,7 +87,12 @@ async function enableInventory(shop: string, supplierId: number, api: GraphQL,
   const sources = input.variants.map((variant) => Number(variant.metafields.find((field) =>
     field.namespace === "ultralove_catalog" && field.key === "supplier_id")?.value)).sort((a, b) => a - b);
   if (preflight && preflight.productId !== claim.productId) throw new InventoryError("The imported listing changed during enrollment. Refresh and review it.");
-  const current = preflight?.current ?? await remoteInventory(api, claim.productId, supplierId, location);
+  let current: RemoteInventory[];
+  try { current = preflight?.current ?? await remoteInventory(api, claim.productId, supplierId, location); }
+  catch (error) {
+    if (error instanceof InventoryProductMissingError) await markListingDeleted(shop, claim.productId);
+    throw error;
+  }
   const verified = mappings(current);
   if (JSON.stringify(sources) !== JSON.stringify(verified.map((item) => item.sourceId))) {
     throw new InventoryError("Imported and Shopify variant identities no longer match. Review before enrolling.");
@@ -105,6 +115,7 @@ async function enableInventory(shop: string, supplierId: number, api: GraphQL,
   await db.$transaction(async (transaction) => {
     const latestClaim = await transaction.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId } } });
     if (latestClaim?.productId !== claim.productId || latestClaim.fulfillmentMode !== "DROPSHIPPING") throw new InventoryError("The imported listing or fulfillment mode changed during enrollment. Refresh and review it.");
+    if (latestClaim.deletedAt?.getTime() !== claim.deletedAt?.getTime()) throw new InventoryError("The Shopify listing was deleted during enrollment. Refresh and review recovery.");
     if (existing) {
       const updated = await transaction.inventorySync.updateMany({
         where: { shop, supplierId, revision: existing.revision, status: { not: "RUNNING" },
@@ -117,13 +128,15 @@ async function enableInventory(shop: string, supplierId: number, api: GraphQL,
       await transaction.inventorySync.create({ data: { shop, supplierId, productId, locationId: location,
         mappings: JSON.stringify(verified), enabled: true, status: "QUEUED", nextRunAt: new Date() } });
     }
+    await transaction.importClaim.update({ where: { shop_supplierId: { shop, supplierId } },
+      data: { deletedAt: null, listingCheckedAt: new Date() } });
   });
 }
 
 export async function enableAllInventory(shop: string, api: GraphQL, confirmation: string) {
   assertLabShop(shop);
   if (confirmation !== "inventory-all-current") throw new InventoryError("Confirm inventory-only sync for all currently imported eligible products.");
-  const products = await inventoryScreen(shop);
+  const products = (await inventoryScreen(shop)).filter((product) => !product.deletedAt);
   const result = { total: products.length, enabled: 0, alreadyEnabled: 0, error: null as string | null,
     blocked: [] as { supplierId: number; name: string; sku: string; error: string }[] };
   const candidates: ((typeof products)[number] & { productId: string })[] = [];
@@ -162,6 +175,7 @@ export async function enableAllInventory(shop: string, api: GraphQL, confirmatio
         result.enabled++;
       } catch (error) {
         if (!(error instanceof InventoryError)) return interrupted(offset + index, error);
+        if (error instanceof InventoryProductMissingError) await markListingDeleted(shop, product.productId);
         console.warn("Bulk inventory enrollment rejected.", product.supplierId, error.message);
         result.blocked.push({ supplierId: product.supplierId, name: product.name, sku: product.sku, error: error.message });
       }
@@ -213,7 +227,7 @@ export async function runInventoryBatch(shop: string, supplierIds: number[], api
   });
   const claim = async (saved: InventorySync, due: boolean) => {
     const owner = await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId: saved.supplierId } } });
-    if (!owner || owner.productId !== saved.productId || owner.fulfillmentMode !== "DROPSHIPPING") {
+    if (!owner || owner.deletedAt || owner.productId !== saved.productId || owner.fulfillmentMode !== "DROPSHIPPING") {
       console.warn("Supplier inventory cycle blocked by fulfillment ownership.", saved.supplierId);
       await db.inventorySync.updateMany({ where: { shop, supplierId: saved.supplierId, revision: saved.revision },
         data: { enabled: false, status: "REVIEW", revision: { increment: 1 }, error: "Supplier sync is not authorized for this product's fulfillment mode or listing." } });
@@ -237,10 +251,11 @@ export async function runInventoryBatch(shop: string, supplierIds: number[], api
   const allowed = async (item: InventoryWork) => item.claimed && !item.failed && !stopping() &&
     Boolean(await db.inventorySync.findFirst({ where: guard(item), select: { supplierId: true } })) &&
     Boolean(await db.importClaim.findFirst({ where: { shop, supplierId: item.saved.supplierId,
-      productId: item.saved.productId, fulfillmentMode: "DROPSHIPPING" }, select: { supplierId: true } }));
+      productId: item.saved.productId, fulfillmentMode: "DROPSHIPPING", deletedAt: null }, select: { supplierId: true } }));
   const fail = async (item: InventoryWork, error: unknown, review = false, disable = false) => {
     item.failed = true;
     console.error("Inventory synchronization failed.", item.saved.supplierId, error instanceof Error ? error.message : "Unknown failure");
+    if (error instanceof InventoryProductMissingError) await markListingDeleted(shop, item.saved.productId);
     if (!item.claimed) return;
     await db.inventorySync.updateMany({
       where: guard(item),

@@ -90,8 +90,11 @@ model ImportClaim {
   productId         String?
   fulfillmentMode   String @default("DROPSHIPPING")
   mutationStartedAt DateTime?
+  deletedAt         DateTime?
+  listingCheckedAt  DateTime?
 
   @@id([shop, supplierId])
+  @@index([shop, deletedAt, listingCheckedAt])
 }
 
 model InventorySync {

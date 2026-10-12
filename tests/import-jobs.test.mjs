@@ -29,6 +29,8 @@ test("persistent queue enforces one active shop job, immutable selections and pr
     for (const statement of listings.split(";").filter((part) => part.trim())) await db.$executeRawUnsafe(statement);
     const fulfillment = await readFile(new URL("../prisma/migrations/20261012030000_fulfillment_modes/migration.sql", import.meta.url), "utf8");
     for (const statement of fulfillment.split(";").filter((part) => part.trim())) await db.$executeRawUnsafe(statement);
+    const lifecycle = await readFile(new URL("../prisma/migrations/20261012034000_deleted_listings/migration.sql", import.meta.url), "utf8");
+    for (const statement of lifecycle.split(";").filter((part) => part.trim())) await db.$executeRawUnsafe(statement);
     const migrated = await db.importJob.findUnique({ where: { id: legacy } });
     assert.equal(migrated.active, false, "old jobs remain draft-only");
     assert.equal(migrated.publicationId, null);
