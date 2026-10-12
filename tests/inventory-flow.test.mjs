@@ -97,6 +97,7 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
       } };
       if (query === INVENTORY_QUERY) {
         const product = products.get(variables.id);
+        if (!product) return { data: { product: null } };
         const offset = Number(variables.after || 0);
         return { data: { product: { ...product, variants: {
           nodes: product.nodes.slice(offset, offset + 100).map((node) => ({ ...node, inventoryItem: {
@@ -261,6 +262,41 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
     assert.match(html, /Sync now/);
     assert.match(html, /Shopify order reservations remain in place/);
     assert.match(html, /251 mapped variants/);
+    await seed(300, [501]);
+    feed.value = source(300, [501]);
+    await inventoryControl(shop, 300, "enable", api, "inventory-only");
+    loseResponse = true;
+    await runInventoryCycle(shop, 300, api);
+    const missingBefore = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 300 } } });
+    assert.ok(missingBefore.pendingKey);
+    const missingProduct = products.get("gid://shopify/Product/300");
+    products.delete("gid://shopify/Product/300");
+    const beforeMissing = { requests: mutationRequests, feed: feed.reads.length };
+    await inventoryControl(shop, 300, "sync-now", api);
+    await runInventoryCycle(shop, 300, api);
+    const missingAfter = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 300 } } });
+    assert.equal(missingAfter.enabled, false);
+    assert.equal(missingAfter.status, "REVIEW");
+    assert.match(missingAfter.error, /linked Shopify product could not be found/);
+    for (const field of ["productId", "mappings", "generation", "cursor", "pending", "pendingKey"]) {
+      assert.equal(missingAfter[field], missingBefore[field], `missing products preserve ${field}`);
+    }
+    assert.deepEqual(missingAfter.pendingAt, missingBefore.pendingAt);
+    await runInventoryCycle(shop, 300, api);
+    assert.equal(mutationRequests, beforeMissing.requests, "missing products never send or replay stock writes");
+    assert.equal(feed.reads.length, beforeMissing.feed, "missing products stop before fetching new supplier stock");
+    await assert.rejects(inventoryControl(shop, 300, "sync-now", api), /paused/);
+    await assert.rejects(inventoryControl(shop, 300, "enable", api, "inventory-only"), /could not be found/);
+    products.set("gid://shopify/Product/300", missingProduct);
+    await runInventoryCycle(shop, 300, api);
+    assert.equal(mutationRequests, beforeMissing.requests, "a returned listing does not silently re-enable sync");
+    await inventoryControl(shop, 300, "enable", api, "inventory-only");
+    await runInventoryCycle(shop, 300, api);
+    const recovered = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 300 } } });
+    assert.equal(recovered.status, "SYNCED");
+    assert.equal(recovered.pendingKey, null);
+    assert.equal(mutationRequests, beforeMissing.requests + 1, "explicit recovery reconciles the exact saved correction");
+    assert.equal(mutations, mutationSizes.length, "idempotent recovery does not apply a correction twice");
     auth.rejected = true;
     await assert.rejects(loader({ request: new Request("https://app.example/app/inventory") }), (error) => error.status === 403);
   } finally {

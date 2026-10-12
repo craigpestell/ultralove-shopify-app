@@ -3,6 +3,11 @@ import type { GraphQL } from "./import-engine.ts";
 
 export class InventoryError extends Error {}
 export class InventoryMutationError extends InventoryError {}
+export class InventoryProductMissingError extends InventoryError {
+  constructor() {
+    super("The linked Shopify product could not be found. Inventory sync is paused. Create a fresh import review to reconnect it or review a replacement, then explicitly enable sync for the verified listing. Any pending stock correction remains protected.");
+  }
+}
 export const INVENTORY_INTERVAL = 5 * 60 * 1000;
 
 export type Mapping = { sourceId: number; variantId: string; inventoryItemId: string };
@@ -133,7 +138,9 @@ export async function remoteInventory(api: GraphQL, productId: string, parentId:
   const cursors = new Set<string>();
   let after: string | null = null;
   for (let page = 0; page < 21; page++) {
-    const product = object((await request(api, INVENTORY_QUERY, { id: productId, location: locationId, after })).product);
+    const data = await request(api, INVENTORY_QUERY, { id: productId, location: locationId, after });
+    if (data.product === null) throw new InventoryProductMissingError();
+    const product = object(data.product);
     if (product.id !== productId || !ownedProduct({
           handle: text(product.handle), tags: list(product.tags).map(text),
           supplierId: product.supplierId === null ? null : { value: text(object(product.supplierId).value) },

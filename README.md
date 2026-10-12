@@ -290,6 +290,13 @@ allows a fresh compare-and-set next cycle. Uncertain requests older than Shopify
 24-hour idempotency window pause for explicit stock review and re-enrollment.
 Supplier rate-limit responses delay scheduling by at least their `Retry-After`.
 Other failures remain visible and retry on the next scheduled cycle.
+If a successful Shopify lookup returns no linked product, synchronization
+instead pauses in **Needs review** with explicit reconnection/replacement
+guidance. Mappings, checkpoints and any uncertain stock correction are retained;
+no stock write, automatic replacement or re-enrollment is attempted. Create a
+fresh import review to recover the listing, reconcile any pending correction,
+then explicitly enable inventory sync. Malformed responses and access errors
+remain failures, not evidence that a product is missing.
 
 ### Deployment and legacy lab cutover
 

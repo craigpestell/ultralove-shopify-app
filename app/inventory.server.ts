@@ -5,7 +5,7 @@ import { CatalogError, inventoryState } from "./catalog.server";
 import { payload, shopContext } from "./import-engine";
 import type { GraphQL } from "./import-engine";
 import {
-  checkpoint, INVENTORY_INTERVAL, inventoryFeed, InventoryError, InventoryMutationError,
+  checkpoint, INVENTORY_INTERVAL, inventoryFeed, InventoryError, InventoryMutationError, InventoryProductMissingError,
   mappings, remoteInventory, setStock, stockOperation, stockPlan, verifyMappings,
 } from "./inventory-engine";
 import type { StockOperation } from "./inventory-engine";
@@ -167,7 +167,8 @@ export async function runInventoryCycle(shop: string, supplierId: number, api: G
     console.error("Inventory synchronization failed.", supplierId, error instanceof Error ? error.message : "Unknown failure");
     await db.inventorySync.updateMany({
       where: { shop, supplierId, enabled: true, revision: saved.revision, status: "RUNNING" },
-      data: { status: "FAILED",
+      data: { status: error instanceof InventoryProductMissingError ? "REVIEW" : "FAILED",
+        ...(error instanceof InventoryProductMissingError ? { enabled: false } : {}),
         ...(error instanceof CatalogError && error.retryAfter !== null
           ? { nextRunAt: new Date(Date.now() + Math.max(INVENTORY_INTERVAL, error.retryAfter * 1000)) } : {}),
         error: error instanceof InventoryError || error instanceof CatalogError ? error.message

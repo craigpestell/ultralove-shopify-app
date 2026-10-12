@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   inventoryFeed, mappings, remoteInventory, stockOperation, stockPlan, setStock,
-  INVENTORY_QUERY, INVENTORY_SET_MUTATION, InventoryMutationError, verifyMappings,
+  INVENTORY_QUERY, INVENTORY_SET_MUTATION, InventoryMutationError, InventoryProductMissingError, verifyMappings,
 } from "../app/inventory-engine.ts";
 
 const generation = "00000000-0000-4000-8000-000000000001";
@@ -85,6 +85,14 @@ test("Shopify mapping discovery guards ownership, tracking and all variant pages
     return { data: { product: remote } };
   };
   assert.deepEqual(await remoteInventory(api, productId, 100, location), current);
+  await assert.rejects(remoteInventory(async () => ({ data: { product: null } }), productId, 100, location),
+    (error) => error instanceof InventoryProductMissingError && /fresh import review/.test(error.message));
+  for (const response of [{ data: {} }, { data: { product: undefined } },
+    { errors: [{ message: "Access denied" }], data: { product: null } }]) {
+    await assert.rejects(remoteInventory(async () => response, productId, 100, location),
+      (error) => !(error instanceof InventoryProductMissingError),
+      "malformed responses and access errors must not be treated as a missing product");
+  }
   for (const field of ["handle", "tags", "supplierId", "id"]) {
     const changed = { ...remote, [field]: field === "tags" ? [] : null };
     await assert.rejects(remoteInventory(async () => ({ data: { product: changed } }), productId, 100, location));
