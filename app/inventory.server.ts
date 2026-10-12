@@ -1,14 +1,15 @@
 import { randomBytes } from "node:crypto";
+import type { InventorySync } from "@prisma/client";
 import db from "./db.server";
 import { assertLabShop } from "./lab-policy.server";
-import { CatalogError, inventoryState } from "./catalog.server";
+import { CatalogError, inventoryStates } from "./catalog.server";
 import { payload, shopContext } from "./import-engine";
 import type { GraphQL } from "./import-engine";
 import {
-  checkpoint, INVENTORY_INTERVAL, inventoryFeed, InventoryError, InventoryMutationError, InventoryProductMissingError,
-  mappings, remoteInventory, setStock, stockOperation, stockPlan, verifyMappings,
+  checkpoint, INVENTORY_INTERVAL, INVENTORY_PRODUCT_BATCH_SIZE, inventoryFeed, InventoryError, InventoryMutationError, InventoryProductMissingError,
+  mappings, remoteInventory, remoteInventories, setStock, stockOperation, stockPlan, verifyMappings,
 } from "./inventory-engine";
-import type { StockOperation } from "./inventory-engine";
+import type { InventoryFeed, InventoryRead, Mapping, RemoteInventory, StockOperation } from "./inventory-engine";
 
 export async function inventoryScreen(shop: string) {
   assertLabShop(shop);
@@ -53,19 +54,26 @@ export async function inventoryControl(shop: string, supplierId: number, intent:
   if (intent !== "enable" || confirmation !== "inventory-only") {
     throw new InventoryError("Confirm inventory-only synchronization before enabling it.");
   }
+  await enableInventory(shop, supplierId, api);
+}
+
+async function enableInventory(shop: string, supplierId: number, api: GraphQL,
+  preflight?: { location: string; productId: string; current: RemoteInventory[] }) {
   const claim = await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId } } });
   if (!claim?.productId) throw new InventoryError("Import this product through the app before enabling inventory sync.");
+  const productId = claim.productId;
   const imported = await db.importItem.findFirst({
     where: { supplierId, productId: claim.productId, status: { in: ["CREATED", "REUSED", "UPDATED", "LINKED"] }, job: { shop } },
     orderBy: { job: { createdAt: "desc" } }, include: { job: true },
   });
   if (!imported) throw new InventoryError("A verified completed import is required before inventory enrollment.");
-  const location = await shopContext(api, shop);
+  const location = preflight?.location ?? await shopContext(api, shop);
   if (location !== imported.job.locationId) throw new InventoryError("The approved inventory location changed. Review the imported product.");
   const input = payload(JSON.parse(imported.payload), supplierId, imported.jobId, location);
   const sources = input.variants.map((variant) => Number(variant.metafields.find((field) =>
     field.namespace === "ultralove_catalog" && field.key === "supplier_id")?.value)).sort((a, b) => a - b);
-  const current = await remoteInventory(api, claim.productId, supplierId, location);
+  if (preflight && preflight.productId !== claim.productId) throw new InventoryError("The imported listing changed during enrollment. Refresh and review it.");
+  const current = preflight?.current ?? await remoteInventory(api, claim.productId, supplierId, location);
   const verified = mappings(current);
   if (JSON.stringify(sources) !== JSON.stringify(verified.map((item) => item.sourceId))) {
     throw new InventoryError("Imported and Shopify variant identities no longer match. Review before enrolling.");
@@ -77,117 +85,318 @@ export async function inventoryControl(shop: string, supplierId: number, intent:
     if (existing.status === "RUNNING") throw new InventoryError("An inventory cycle is already running. Pause it before changing enrollment.");
   }
   const expired = Boolean(existing?.pendingAt && Date.now() - existing.pendingAt.getTime() >= 24 * 60 * 60 * 1000);
+  if (preflight && existing && (existing.pending !== null || existing.pendingKey !== null || existing.pendingAt !== null)) {
+    throw new InventoryError("A pending stock correction needs individual review. Bulk enrollment does not reset or resume uncertain corrections.");
+  }
+  if (expired && existing?.pendingKey && (pendingCorrection(existing).ids.length > 1 ||
+      await db.inventorySync.count({ where: { shop, pendingKey: existing.pendingKey } }) > 1)) {
+    throw new InventoryError("An expired cross-product stock correction needs operator review for every participating product. Its shared retry record was not reset.");
+  }
   if (expired) console.warn("Explicitly restarting inventory enrollment after an expired uncertain correction.", supplierId);
-  await db.inventorySync.upsert({
-    where: { shop_supplierId: { shop, supplierId } },
-    create: { shop, supplierId, productId: claim.productId, locationId: location, mappings: JSON.stringify(verified),
-      enabled: true, status: "QUEUED", nextRunAt: new Date() },
-    update: { enabled: true, status: "QUEUED", revision: { increment: 1 }, nextRunAt: new Date(),
-      ...(expired ? { pending: null, pendingKey: null, pendingAt: null } : {}) },
+  await db.$transaction(async (transaction) => {
+    const latestClaim = await transaction.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId } } });
+    if (latestClaim?.productId !== claim.productId) throw new InventoryError("The imported listing changed during enrollment. Refresh and review it.");
+    if (existing) {
+      const updated = await transaction.inventorySync.updateMany({
+        where: { shop, supplierId, revision: existing.revision, status: { not: "RUNNING" },
+          pending: existing.pending, pendingKey: existing.pendingKey },
+        data: { enabled: true, status: "QUEUED", error: null, revision: { increment: 1 }, nextRunAt: new Date(),
+          ...(expired ? { pending: null, pendingKey: null, pendingAt: null } : {}) },
+      });
+      if (updated.count !== 1) throw new InventoryError("Inventory enrollment changed during verification. Refresh its status before retrying.");
+    } else {
+      await transaction.inventorySync.create({ data: { shop, supplierId, productId, locationId: location,
+        mappings: JSON.stringify(verified), enabled: true, status: "QUEUED", nextRunAt: new Date() } });
+    }
   });
 }
 
-export async function runInventoryCycle(shop: string, supplierId: number, api: GraphQL, stopping = () => false) {
+export async function enableAllInventory(shop: string, api: GraphQL, confirmation: string) {
   assertLabShop(shop);
-  const claimed = await db.inventorySync.updateMany({
-    where: { shop, supplierId, enabled: true, status: { not: "RUNNING" }, nextRunAt: { lte: new Date() } },
-    data: { status: "RUNNING", nextRunAt: new Date(Date.now() + INVENTORY_INTERVAL) },
-  });
-  if (claimed.count !== 1) return;
-  const saved = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId } } });
-  if (!saved.enabled || saved.status !== "RUNNING") return;
-  try {
-    if (await shopContext(api, shop) !== saved.locationId) throw new InventoryError("Approved stock location changed. No inventory was updated.");
-    const expected = mappings(JSON.parse(saved.mappings));
-    let current = await remoteInventory(api, saved.productId, supplierId, saved.locationId);
-    verifyMappings(expected, current);
-    const allowed = async () => !stopping() && Boolean(await db.inventorySync.findFirst({
-      where: { shop, supplierId, enabled: true, revision: saved.revision, status: "RUNNING" },
-      select: { supplierId: true },
-    }));
-    const assertOperation = (input: StockOperation) => {
-      if (input.quantities.some((item) => item.locationId !== saved.locationId ||
-          !expected.some((mapping) => mapping.inventoryItemId === item.inventoryItemId))) {
-        throw new InventoryError("Pending inventory correction is outside the approved mapping.");
-      }
-    };
-    const apply = async (input: StockOperation, key: string) => {
-      assertOperation(input);
-      if (!await allowed()) return false;
-      try {
-        await setStock(api, input, key);
-      } catch (error) {
-        if (error instanceof InventoryMutationError) {
-          await db.inventorySync.updateMany({ where: { shop, supplierId, pendingKey: key }, data: { pending: null, pendingKey: null, pendingAt: null } });
-        }
-        throw error;
-      }
-      await db.inventorySync.updateMany({ where: { shop, supplierId, pendingKey: key }, data: { pending: null, pendingKey: null, pendingAt: null } });
-      return true;
-    };
-    if (saved.pending !== null || saved.pendingKey !== null) {
-      if (!saved.pending || !saved.pendingKey || !saved.pendingAt) throw new InventoryError("Incomplete persisted inventory correction; operator review is required.");
-      if (Date.now() - saved.pendingAt.getTime() >= 24 * 60 * 60 * 1000) {
-        console.error("Uncertain inventory correction outlived Shopify's idempotency window.", supplierId);
-        await db.inventorySync.updateMany({
-          where: { shop, supplierId, enabled: true, revision: saved.revision, status: "RUNNING" },
-          data: { enabled: false, status: "REVIEW",
-            error: "An uncertain stock correction exceeded Shopify's 24-hour retry window. Review Shopify stock, then explicitly enable sync to start a fresh correction." },
-        });
-        return;
-      }
-      const pending = stockOperation(JSON.parse(saved.pending));
-      assertOperation(pending);
-      if (pending.quantities.every((quantity) =>
-        current.find((item) => item.inventoryItemId === quantity.inventoryItemId)?.onHand === quantity.quantity)) {
-        if (!await allowed()) return;
-        await db.inventorySync.updateMany({ where: { shop, supplierId, pendingKey: saved.pendingKey },
-          data: { pending: null, pendingKey: null, pendingAt: null } });
-      } else if (!await apply(pending, saved.pendingKey)) return;
-      current = await remoteInventory(api, saved.productId, supplierId, saved.locationId);
-      verifyMappings(expected, current);
+  if (confirmation !== "inventory-all-current") throw new InventoryError("Confirm inventory-only sync for all currently imported eligible products.");
+  const products = await inventoryScreen(shop);
+  const result = { total: products.length, enabled: 0, alreadyEnabled: 0, error: null as string | null,
+    blocked: [] as { supplierId: number; name: string; sku: string; error: string }[] };
+  const candidates: ((typeof products)[number] & { productId: string })[] = [];
+  for (const product of products) {
+    if (product.enabled) {
+      result.alreadyEnabled++;
+    } else if (product.status === "RUNNING" || !product.productId) {
+      result.blocked.push({ ...product, error: "A verified, non-running imported listing is required. Refresh its status." });
+    } else {
+      candidates.push({ ...product, productId: product.productId });
     }
-    if (!await allowed()) return;
-    const previous = saved.generation === null && saved.cursor === null ? null : checkpoint({ generation: saved.generation, cursor: saved.cursor });
-    const feed = inventoryFeed(await inventoryState(supplierId, previous), supplierId, previous);
-    const plan = stockPlan(current, feed, saved.locationId);
-    for (let offset = 0; offset < plan.changed.length; offset += 250) {
-      const key = randomBytes(16).toString("hex");
-      const input: StockOperation = { name: "on_hand", reason: "correction",
-        referenceDocumentUri: `gid://ultralove/InventorySync/${key}`, quantities: plan.changed.slice(offset, offset + 250) };
-      if (stopping()) return;
-      const reserved = await db.inventorySync.updateMany({
-        where: { shop, supplierId, enabled: true, revision: saved.revision, status: "RUNNING", pending: null, pendingKey: null },
-        data: { pending: JSON.stringify(input), pendingKey: key, pendingAt: new Date() },
-      });
-      if (reserved.count !== 1 || !await apply(input, key)) return;
-    }
-    if (!await allowed()) return;
-    const verified = await remoteInventory(api, saved.productId, supplierId, saved.locationId);
-    verifyMappings(expected, verified);
-    if (plan.desired.some((quantity) => verified.find((item) => item.inventoryItemId === quantity.inventoryItemId)?.onHand !== quantity.quantity)) {
-      throw new InventoryError("Shopify on-hand stock changed during verification. The checkpoint was not advanced; the next cycle will reconcile.");
-    }
-    await db.inventorySync.updateMany({
-      where: { shop, supplierId, enabled: true, revision: saved.revision, status: "RUNNING" },
-      data: { generation: feed.generation, cursor: feed.cursor, lastSuccessAt: new Date(),
-        status: plan.warnings.length ? "REVIEW" : "SYNCED", error: plan.warnings.join(" ") || null },
+  }
+  if (!candidates.length) return result;
+  const interrupted = (offset: number, error: unknown) => {
+    console.error("Bulk inventory enrollment interrupted.", error instanceof Error ? error.message : "Unknown failure");
+    result.error = error instanceof InventoryError ? error.message
+      : "Bulk enrollment stopped because Shopify or saved inventory verification failed. Previously enabled products stay enabled; review the results before retrying.";
+    for (const product of candidates.slice(offset)) result.blocked.push({
+      supplierId: product.supplierId, name: product.name, sku: product.sku, error: `Not enabled: ${result.error}`,
     });
-  } catch (error) {
-    console.error("Inventory synchronization failed.", supplierId, error instanceof Error ? error.message : "Unknown failure");
+    return result;
+  };
+  let location: string;
+  try { location = await shopContext(api, shop); } catch (error) { return interrupted(0, error); }
+  for (let offset = 0; offset < candidates.length; offset += INVENTORY_PRODUCT_BATCH_SIZE) {
+    const batch = candidates.slice(offset, offset + INVENTORY_PRODUCT_BATCH_SIZE);
+    let reads: InventoryRead[];
+    try { reads = await remoteInventories(api, batch, location); } catch (error) { return interrupted(offset, error); }
+    for (const [index, read] of reads.entries()) {
+      const product = batch[index];
+      try {
+        if ("error" in read) throw read.error;
+        await enableInventory(shop, product.supplierId, api, { location, productId: product.productId, current: read.inventory });
+        result.enabled++;
+      } catch (error) {
+        if (!(error instanceof InventoryError)) return interrupted(offset + index, error);
+        console.warn("Bulk inventory enrollment rejected.", product.supplierId, error.message);
+        result.blocked.push({ supplierId: product.supplierId, name: product.name, sku: product.sku, error: error.message });
+      }
+    }
+  }
+  return result;
+}
+
+type InventoryWork = {
+  saved: InventorySync; claimed: boolean; failed: boolean; expected: Mapping[];
+  current: RemoteInventory[] | null; feed: InventoryFeed | null; plan: ReturnType<typeof stockPlan> | null;
+};
+
+function pendingCorrection(saved: InventorySync) {
+  if (!saved.pending || !saved.pendingKey || !saved.pendingAt) {
+    throw new InventoryError("Incomplete persisted inventory correction; operator review is required.");
+  }
+  let value: unknown;
+  try { value = JSON.parse(saved.pending); } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw new InventoryError("The persisted inventory correction is not valid JSON; operator review is required.");
+  }
+  const input = stockOperation(value);
+  if (!/^[a-f0-9]{32}$/.test(saved.pendingKey) ||
+      input.referenceDocumentUri !== `gid://ultralove/InventorySync/${saved.pendingKey}`) {
+    throw new InventoryError("The persisted inventory correction key and request identity do not match; operator review is required.");
+  }
+  const ids = typeof value === "object" && value !== null && "participants" in value ? value.participants : [saved.supplierId];
+  if (!Array.isArray(ids) || !ids.length || ids.length > INVENTORY_PRODUCT_BATCH_SIZE ||
+      ids.some((id) => typeof id !== "number" || !Number.isInteger(id) || id < 1 || id > 2147483647) ||
+      new Set(ids).size !== ids.length || !ids.includes(saved.supplierId)) {
+    throw new InventoryError("Invalid persisted stock correction participants; operator review is required.");
+  }
+  return { ids: ids.sort((a, b) => a - b), key: saved.pendingKey, pendingAt: saved.pendingAt, input };
+}
+
+export async function runInventoryCycle(shop: string, supplierId: number, api: GraphQL, stopping = () => false) {
+  return runInventoryBatch(shop, [supplierId], api, stopping);
+}
+
+export async function runInventoryBatch(shop: string, supplierIds: number[], api: GraphQL, stopping = () => false) {
+  assertLabShop(shop);
+  if (!supplierIds.length || supplierIds.length > INVENTORY_PRODUCT_BATCH_SIZE ||
+      supplierIds.some((id) => !Number.isInteger(id) || id < 1 || id > 2147483647) ||
+      new Set(supplierIds).size !== supplierIds.length) throw new InventoryError("Schedule 1-5 distinct inventory products per cycle.");
+  const work: InventoryWork[] = [];
+  const guard = (item: InventoryWork) => ({
+    shop, supplierId: item.saved.supplierId, enabled: true, revision: item.saved.revision, status: "RUNNING",
+  });
+  const claim = async (saved: InventorySync, due: boolean) => {
+    const nextRunAt = new Date(Date.now() + INVENTORY_INTERVAL);
+    const claimed = saved.enabled && saved.status !== "RUNNING" && (await db.inventorySync.updateMany({
+      where: { shop, supplierId: saved.supplierId, enabled: true, revision: saved.revision, status: { not: "RUNNING" },
+        ...(due ? { nextRunAt: { lte: new Date() } } : {}) },
+      data: { status: "RUNNING", nextRunAt },
+    })).count === 1;
+    const item: InventoryWork = { saved: claimed ? { ...saved, status: "RUNNING", nextRunAt } : saved,
+      claimed, failed: false, expected: [], current: null, feed: null, plan: null };
+    if (claimed || !due) work.push(item);
+  };
+  for (const supplierId of supplierIds) {
+    const saved = await db.inventorySync.findUnique({ where: { shop_supplierId: { shop, supplierId } } });
+    if (saved) await claim(saved, true);
+  }
+  if (!work.length) return;
+  const allowed = async (item: InventoryWork) => item.claimed && !item.failed && !stopping() &&
+    Boolean(await db.inventorySync.findFirst({ where: guard(item), select: { supplierId: true } }));
+  const fail = async (item: InventoryWork, error: unknown, review = false, disable = false) => {
+    item.failed = true;
+    console.error("Inventory synchronization failed.", item.saved.supplierId, error instanceof Error ? error.message : "Unknown failure");
+    if (!item.claimed) return;
     await db.inventorySync.updateMany({
-      where: { shop, supplierId, enabled: true, revision: saved.revision, status: "RUNNING" },
-      data: { status: error instanceof InventoryProductMissingError ? "REVIEW" : "FAILED",
-        ...(error instanceof InventoryProductMissingError ? { enabled: false } : {}),
+      where: guard(item),
+      data: { status: review || error instanceof InventoryProductMissingError ? "REVIEW" : "FAILED",
+        ...(disable || error instanceof InventoryProductMissingError ? { enabled: false } : {}),
         ...(error instanceof CatalogError && error.retryAfter !== null
           ? { nextRunAt: new Date(Date.now() + Math.max(INVENTORY_INTERVAL, error.retryAfter * 1000)) } : {}),
         error: error instanceof InventoryError || error instanceof CatalogError ? error.message
-        : "Inventory sync was interrupted or supplier/Shopify access failed. The next cycle retries; no checkpoint was advanced." },
+          : "Inventory sync was interrupted or supplier/Shopify access failed. The next cycle retries; no checkpoint was advanced." },
     });
+  };
+  const clear = async (members: InventoryWork[], key: string) => {
+    await db.inventorySync.updateMany({ where: { shop, supplierId: { in: members.map((item) => item.saved.supplierId) }, pendingKey: key },
+      data: { pending: null, pendingKey: null, pendingAt: null } });
+    for (const item of members) Object.assign(item.saved, { pending: null, pendingKey: null, pendingAt: null });
+  };
+  const apply = async (members: InventoryWork[], input: StockOperation, key: string) => {
+    for (const quantity of input.quantities) {
+      const owners = members.filter((item) => item.saved.locationId === quantity.locationId &&
+        item.expected.some((mapping) => mapping.inventoryItemId === quantity.inventoryItemId));
+      if (owners.length !== 1) throw new InventoryError("Pending inventory correction is outside the uniquely approved product mappings.");
+    }
+    if (!(await Promise.all(members.map(allowed))).every(Boolean)) return false;
+    try {
+      await setStock(api, input, key);
+    } catch (error) {
+      if (error instanceof InventoryMutationError) await clear(members, key);
+      throw error;
+    }
+    await clear(members, key);
+    return true;
+  };
+  const read = async (items: InventoryWork[], location: string) => {
+    for (let offset = 0; offset < items.length; offset += INVENTORY_PRODUCT_BATCH_SIZE) {
+      const batch = items.slice(offset, offset + INVENTORY_PRODUCT_BATCH_SIZE);
+      try {
+        const reads = await remoteInventories(api, batch.map((item) => ({
+          supplierId: item.saved.supplierId, productId: item.saved.productId,
+        })), location);
+        for (const [index, result] of reads.entries()) {
+          const item = batch[index];
+          try {
+            if ("error" in result) throw result.error;
+            item.expected = mappings(JSON.parse(item.saved.mappings));
+            verifyMappings(item.expected, result.inventory);
+            item.current = result.inventory;
+          } catch (error) { await fail(item, error); }
+        }
+      } catch (error) { for (const item of batch) await fail(item, error); }
+    }
+  };
+  try {
+    const pendingGroups = new Map<string, { members: InventoryWork[]; input: StockOperation }>();
+    const seen = new Set<string>();
+    for (let index = 0; index < work.length; index++) {
+      const item = work[index];
+      const key = item.saved.pendingKey;
+      if (item.saved.pending === null && key === null && item.saved.pendingAt === null) continue;
+      if (key && seen.has(key)) continue;
+      if (key) seen.add(key);
+      try {
+        const correction = pendingCorrection(item.saved);
+        const { ids } = correction;
+        const rows = await db.inventorySync.findMany({ where: { shop, pendingKey: correction.key } });
+        if (rows.length !== ids.length || rows.some((row) => !ids.includes(row.supplierId) ||
+            row.pending !== item.saved.pending || row.pendingAt?.getTime() !== item.saved.pendingAt?.getTime())) {
+          throw new InventoryError("Shared inventory correction records are incomplete or inconsistent; operator review is required.");
+        }
+        for (const row of rows) if (!work.some((entry) => entry.saved.supplierId === row.supplierId)) await claim(row, false);
+        const members = work.filter((entry) => ids.includes(entry.saved.supplierId));
+        if (Date.now() - correction.pendingAt.getTime() >= 24 * 60 * 60 * 1000) {
+          const error = new InventoryError(ids.length > 1
+            ? "An uncertain cross-product stock correction exceeded Shopify's 24-hour retry window. Operator review is required for all participating products; the shared correction remains protected."
+            : "An uncertain stock correction exceeded Shopify's 24-hour retry window. Review Shopify stock, then explicitly enable sync to start a fresh correction.");
+          for (const member of members) await fail(member, error, true, true);
+        } else {
+          pendingGroups.set(correction.key, { members, input: correction.input });
+        }
+      } catch (error) {
+        for (const member of work.filter((entry) => entry === item || key !== null && entry.saved.pendingKey === key)) await fail(member, error, true);
+      }
+    }
+    if (stopping() || work.every((item) => item.failed)) return;
+    const location = await shopContext(api, shop);
+    for (const item of work) if (!item.failed && item.saved.locationId !== location) {
+      await fail(item, new InventoryError("Approved stock location changed. No inventory was updated."));
+    }
+    await read(work.filter((item) => !item.failed), location);
+    for (const [key, { members, input }] of pendingGroups) {
+      try {
+        if (members.some((item) => item.failed || !item.current)) {
+          throw new InventoryError("A participating product could not be verified. Its shared stock correction remains protected; review every participating listing before retrying.");
+        }
+        if (input.quantities.some((quantity) => members.filter((item) => item.saved.locationId === quantity.locationId &&
+            item.expected.some((mapping) => mapping.inventoryItemId === quantity.inventoryItemId)).length !== 1)) {
+          throw new InventoryError("Pending inventory correction is outside the uniquely approved product mappings.");
+        }
+        if (input.quantities.every((quantity) => members.some((item) =>
+            item.current?.some((remote) => remote.inventoryItemId === quantity.inventoryItemId && remote.onHand === quantity.quantity)))) {
+          if (stopping()) return;
+          await clear(members, key);
+        } else {
+          if (!await apply(members, input, key)) {
+            throw new InventoryError("A participating product is paused or its enrollment changed. Resume and verify every participating product before retrying the protected shared correction.");
+          }
+          await read(members, location);
+        }
+      } catch (error) {
+        for (const member of members) if (!member.failed) await fail(member, error, true);
+      }
+    }
+    const ready: InventoryWork[] = [];
+    for (const item of work) if (item.current && item.saved.pending === null && await allowed(item)) ready.push(item);
+    for (let offset = 0; offset < ready.length; offset += INVENTORY_PRODUCT_BATCH_SIZE) {
+      const batch = ready.slice(offset, offset + INVENTORY_PRODUCT_BATCH_SIZE);
+      try {
+        const requests = batch.map((item) => ({ supplierId: item.saved.supplierId,
+          checkpoint: item.saved.generation === null && item.saved.cursor === null ? null
+            : checkpoint({ generation: item.saved.generation, cursor: item.saved.cursor }) }));
+        const feeds = await inventoryStates(requests);
+        for (const [index, item] of batch.entries()) {
+          try {
+            item.feed = inventoryFeed(feeds[index], item.saved.supplierId, requests[index].checkpoint);
+            if (!item.current) throw new InventoryError("Shopify inventory was not verified before reading supplier stock.");
+            item.plan = stockPlan(item.current, item.feed, location);
+          } catch (error) { await fail(item, error); }
+        }
+      } catch (error) { for (const item of batch) await fail(item, error); }
+    }
+    for (let productOffset = 0; productOffset < ready.length; productOffset += INVENTORY_PRODUCT_BATCH_SIZE) {
+      const parents = ready.slice(productOffset, productOffset + INVENTORY_PRODUCT_BATCH_SIZE);
+      const changes = parents.flatMap((item) => item.failed || !item.plan ? [] : item.plan.changed.map((quantity) => ({ item, quantity })));
+      for (let offset = 0; offset < changes.length; offset += 250) {
+        if (stopping()) return;
+        const candidates = changes.slice(offset, offset + 250).filter((entry) => !entry.item.failed);
+        const active = new Set<InventoryWork>();
+        for (const item of new Set(candidates.map((entry) => entry.item))) if (await allowed(item)) active.add(item);
+        const entries = candidates.filter((entry) => active.has(entry.item));
+        if (!entries.length) continue;
+        const members = [...active];
+        try {
+          const key = randomBytes(16).toString("hex");
+          const input = stockOperation({ name: "on_hand", reason: "correction",
+            referenceDocumentUri: `gid://ultralove/InventorySync/${key}`, quantities: entries.map((entry) => entry.quantity) });
+          const pending = JSON.stringify({ ...input, participants: members.map((item) => item.saved.supplierId).sort((a, b) => a - b) });
+          const pendingAt = new Date();
+          await db.$transaction(async (transaction) => {
+            for (const member of members) {
+              const reserved = await transaction.inventorySync.updateMany({ where: { ...guard(member), pending: null, pendingKey: null },
+                data: { pending, pendingKey: key, pendingAt } });
+              if (reserved.count !== 1) throw new InventoryError("Inventory enrollment changed while reserving the batch; no stock correction was sent.");
+            }
+          });
+          for (const member of members) Object.assign(member.saved, { pending, pendingKey: key, pendingAt });
+          if (!await apply(members, input, key)) {
+            throw new InventoryError("Inventory enrollment changed after the batch was reserved. The shared correction remains protected; no stock request was sent.");
+          }
+        } catch (error) { for (const member of members) await fail(member, error); }
+      }
+    }
+    const verify: InventoryWork[] = [];
+    for (const item of ready) if (item.plan && item.feed && await allowed(item)) verify.push(item);
+    await read(verify, location);
+    for (const item of verify) {
+      if (!item.current || !item.plan || !item.feed || !await allowed(item)) continue;
+      if (item.plan.desired.some((quantity) => !item.current?.some((remote) =>
+          remote.inventoryItemId === quantity.inventoryItemId && remote.onHand === quantity.quantity))) {
+        await fail(item, new InventoryError("Shopify on-hand stock changed during verification. The checkpoint was not advanced; the next cycle will reconcile."));
+        continue;
+      }
+      await db.inventorySync.updateMany({ where: guard(item), data: { generation: item.feed.generation, cursor: item.feed.cursor,
+        lastSuccessAt: new Date(), status: item.plan.warnings.length ? "REVIEW" : "SYNCED", error: item.plan.warnings.join(" ") || null } });
+    }
+  } catch (error) {
+    for (const item of work) if (!item.failed) await fail(item, error);
   } finally {
-    await db.inventorySync.updateMany({
-      where: { shop, supplierId, enabled: true, revision: saved.revision, status: "RUNNING" },
-      data: { status: "QUEUED" },
-    });
+    for (const item of work) if (item.claimed) await db.inventorySync.updateMany({ where: guard(item), data: { status: "QUEUED" } });
   }
 }

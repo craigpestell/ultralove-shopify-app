@@ -21,12 +21,16 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
           export class CatalogError extends Error {
             constructor(message,retryAfter=null) { super(message);this.retryAfter=retryAfter; }
           }
-          export const feed = { value: null, reads: [], hook: null, error: null };
+          export const feed = { value: null, reads: [], batches: [], hook: null, error: null };
           export async function inventoryState(id, checkpoint) {
             feed.reads.push({id,checkpoint});
             if(feed.hook) await feed.hook();
             if(feed.error) throw feed.error;
             return typeof feed.value === "function" ? feed.value(id) : feed.value;
+          }
+          export async function inventoryStates(products) {
+            feed.batches.push(products.map(product=>product.supplierId));
+            return Promise.all(products.map(product=>inventoryState(product.supplierId,product.checkpoint)));
           }
           export async function validateSelection() {}
           export async function importPlan() { throw new Error("Inventory must not import"); }`;
@@ -45,8 +49,8 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
       const sql = await readFile(new URL(`../prisma/migrations/${migration}/migration.sql`, import.meta.url), "utf8");
       for (const statement of sql.split(";").filter((part) => part.trim())) await db.$executeRawUnsafe(statement);
     }
-    const { inventoryControl, inventoryScreen, runInventoryCycle } = await server.ssrLoadModule("/app/inventory.server.ts");
-    const { INVENTORY_QUERY, INVENTORY_SET_MUTATION } = await server.ssrLoadModule("/app/inventory-engine.ts");
+    const { enableAllInventory, inventoryControl, inventoryScreen, runInventoryCycle, runInventoryBatch } = await server.ssrLoadModule("/app/inventory.server.ts");
+    const { INVENTORY_QUERY, INVENTORY_BATCH_QUERY, INVENTORY_SET_MUTATION } = await server.ssrLoadModule("/app/inventory-engine.ts");
     const { CONTEXT_QUERY } = await server.ssrLoadModule("/app/import-engine.ts");
     const { feed, CatalogError } = await server.ssrLoadModule("/app/catalog.server.ts");
     const { auth } = await server.ssrLoadModule("/app/shopify.server.ts");
@@ -61,6 +65,8 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
     let loseResponse = false;
     let loseBeforeMutation = false;
     let rejectMutation = false;
+    let inventoryRequests = 0;
+    let contextRequests = 0;
     const mutationKeys = [];
     const seed = async (id, sources) => {
       const run = id.toString(16).padStart(32, "0");
@@ -92,24 +98,36 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
         })),
       });
     };
+    const inventoryPage = (id, after = null, pageSize = 100) => {
+      const product = products.get(id);
+      if (!product) return null;
+      const offset = Number(after || 0);
+      return { ...product, variants: {
+        nodes: product.nodes.slice(offset, offset + pageSize).map((node) => ({ ...node, inventoryItem: {
+          ...node.inventoryItem, inventoryLevel: { quantities: [
+            { name: "on_hand", quantity: node.inventoryItem.onHand },
+            { name: "committed", quantity: node.inventoryItem.committed },
+          ] },
+        } })),
+        pageInfo: { hasNextPage: offset + pageSize < product.nodes.length, endCursor: String(offset + pageSize) },
+      } };
+    };
     const api = async (query, variables) => {
-      if (query === CONTEXT_QUERY) return { data: {
+      if (query === CONTEXT_QUERY) {
+        contextRequests++;
+        return { data: {
         shop: { myshopifyDomain: shop, currencyCode: "CAD" },
         locations: { nodes: [{ id: location, name: "Shop location", isActive: true, fulfillsOnlineOrders: true }], pageInfo: { hasNextPage: false } },
-      } };
+        } };
+      }
       if (query === INVENTORY_QUERY) {
-        const product = products.get(variables.id);
-        if (!product) return { data: { product: null } };
-        const offset = Number(variables.after || 0);
-        return { data: { product: { ...product, variants: {
-          nodes: product.nodes.slice(offset, offset + 100).map((node) => ({ ...node, inventoryItem: {
-            ...node.inventoryItem, inventoryLevel: { quantities: [
-              { name: "on_hand", quantity: node.inventoryItem.onHand },
-              { name: "committed", quantity: node.inventoryItem.committed },
-            ] },
-          } })),
-          pageInfo: { hasNextPage: offset + 100 < product.nodes.length, endCursor: String(offset + 100) },
-        } } } };
+        inventoryRequests++;
+        return { data: { product: inventoryPage(variables.id, variables.after) } };
+      }
+      if (query === INVENTORY_BATCH_QUERY) {
+        inventoryRequests++;
+        assert.ok(variables.ids.length > 1 && variables.ids.length <= 5);
+        return { data: { nodes: variables.ids.map((id) => inventoryPage(id, null, 25)) } };
       }
       assert.equal(query, INVENTORY_SET_MUTATION, "no product/content/publication/order mutations are allowed");
       mutationRequests++;
@@ -119,7 +137,13 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
       assert.ok(variables.input.quantities.length <= 250);
       const persisted = await db.inventorySync.findFirst({ where: { pendingKey: variables.key } });
       assert.ok(persisted?.pendingAt, "persist key, input and timestamp before sending any stock mutation");
-      const savedInput = JSON.parse(persisted.pending);
+      const { participants, ...savedInput } = JSON.parse(persisted.pending);
+      if (participants) {
+        const rows = await db.inventorySync.findMany({ where: { pendingKey: variables.key } });
+        assert.deepEqual(rows.map(row => row.supplierId).sort((a, b) => a - b), participants);
+        assert.ok(rows.every(row => row.pending === persisted.pending && row.pendingAt.getTime() === persisted.pendingAt.getTime()),
+          "every participating product must have the identical full correction before dispatch");
+      }
       assert.deepEqual({ ...savedInput, quantities: savedInput.quantities.map(({ compareQuantity, ...quantity }) => ({
         ...quantity, changeFromQuantity: compareQuantity,
       })) }, variables.input);
@@ -318,6 +342,227 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
     assert.equal(recovered.pendingKey, null);
     assert.equal(mutationRequests, beforeMissing.requests, "explicit recovery verifies already-applied quantities without resending");
     assert.equal(mutations, mutationSizes.length, "idempotent recovery does not apply a correction twice");
+
+    for (const id of [1000, 1100, 1200, 1300, 1400]) await seed(id, [id * 10 + 1]);
+    for (const id of [1000, 1100, 1200, 1400]) await inventoryControl(shop, id, "enable", api, "inventory-only");
+    await inventoryControl(shop, 1000, "pause", api);
+    await inventoryControl(shop, 1200, "pause", api);
+    await db.inventorySync.update({ where: { shop_supplierId: { shop, supplierId: 1200 } }, data: { status: "RUNNING" } });
+    products.delete("gid://shopify/Product/1300");
+    feed.value = source(1400, [14001], 7, 20);
+    loseBeforeMutation = true;
+    await runInventoryCycle(shop, 1400, api);
+    await inventoryControl(shop, 1400, "pause", api);
+    const protectedBefore = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 1400 } } });
+    const enabledBefore = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 1100 } } });
+    await assert.rejects(enableAllInventory(shop, api, "inventory-only"), /Confirm/);
+    for (let id = 1500; id < 1800; id++) await seed(id, [id * 10 + 1]);
+    const candidates = (await inventoryScreen(shop)).filter(product => !product.enabled && product.status !== "RUNNING");
+    const bulkBefore = { reads: inventoryRequests, contexts: contextRequests, mutations: mutationRequests };
+    const bulkAction = await action({ request: new Request("https://app.example/app/inventory?search=SKU-1500&filter=off", {
+      method: "POST", body: new URLSearchParams({ intent: "enable-all", confirm: "inventory-all-current" }),
+    }) });
+    const bulk = bulkAction.data.bulk;
+    assert.equal(bulk.enabled, 302, "all 300 new imports and both safe paused products enroll independently of visible search results");
+    assert.deepEqual(bulk.blocked.map(product => product.supplierId).sort((a, b) => a - b), [1200, 1300, 1400]);
+    assert.match(bulk.blocked.find(product => product.supplierId === 1400).error, /pending stock correction/i);
+    assert.equal(bulk.total, bulk.enabled + bulk.alreadyEnabled + bulk.blocked.length);
+    assert.equal(inventoryRequests - bulkBefore.reads, Math.ceil(candidates.length / 5), "bulk eligibility really batches Shopify reads across products");
+    assert.equal(contextRequests - bulkBefore.contexts, 1, "bulk enrollment shares a single approved shop/location lookup");
+    assert.equal(mutationRequests, bulkBefore.mutations, "enrollment schedules stock cycles without mutating stock");
+    const protectedAfter = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 1400 } } });
+    assert.deepEqual(protectedAfter, protectedBefore, "bulk enable never resumes or resets a protected uncertain correction");
+    assert.deepEqual(await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 1100 } } }), enabledBefore,
+      "already-enabled products keep their exact revision, checkpoint and schedule");
+    await seed(1800, [18001]);
+    assert.equal(await db.inventorySync.findUnique({ where: { shop_supplierId: { shop, supplierId: 1800 } } }), null,
+      "future imports remain opt-in");
+    for (const body of [
+      { intent: "enable-all" }, { intent: "enable-all", confirm: "inventory-only" },
+      { intent: "enable-all", confirm: "inventory-all-current", supplierId: "1500" },
+    ]) {
+      const rejected = await action({ request: new Request("https://app.example/app/inventory", {
+        method: "POST", body: new URLSearchParams(body),
+      }) });
+      assert.equal(rejected.init.status, 400);
+    }
+
+    const crossIds = [1900, 1901, 1902, 1903, 1904];
+    for (const id of crossIds) {
+      await seed(id, [id * 10 + 1]);
+      await inventoryControl(shop, id, "enable", api, "inventory-only");
+    }
+    products.get("gid://shopify/Product/1900").nodes[0].inventoryItem.committed = 3;
+    let desired = 11;
+    let cursor = 21;
+    feed.value = id => source(id, [id * 10 + 1], desired, cursor);
+    const syncCross = async () => {
+      for (const id of crossIds) await inventoryControl(shop, id, "sync-now", api);
+    };
+    const crossBefore = { contexts: contextRequests, reads: inventoryRequests, feed: feed.batches.length, sizes: mutationSizes.length };
+    await runInventoryBatch(shop, crossIds, api);
+    assert.equal(contextRequests - crossBefore.contexts, 1);
+    assert.equal(inventoryRequests - crossBefore.reads, 2, "five simple products need one initial and one final shared Shopify inventory read");
+    assert.equal(feed.batches.length - crossBefore.feed, 1);
+    assert.deepEqual(feed.batches.at(-1), crossIds);
+    assert.deepEqual(mutationSizes.slice(crossBefore.sizes), [5], "five products share one real stock mutation");
+    for (const id of crossIds) {
+      const state = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: id } } });
+      assert.equal(state.status, "SYNCED");
+      assert.equal(state.cursor, cursor);
+      assert.equal(state.pending, null);
+      const product = products.get(`gid://shopify/Product/${id}`);
+      assert.equal(product.nodes[0].inventoryItem.onHand, desired);
+      assert.deepEqual([product.title, product.price, product.description, product.published], ["Retailer title", "99.00", "Retailer description", true]);
+    }
+    assert.equal(products.get("gid://shopify/Product/1900").nodes[0].inventoryItem.committed, 3);
+    await syncCross();
+    const unchanged = mutationRequests;
+    await runInventoryBatch(shop, crossIds, api);
+    assert.equal(mutationRequests, unchanged, "unchanged batched inventory never sends a mutation");
+
+    desired = 12; cursor = 22;
+    await syncCross();
+    loseBeforeMutation = true;
+    await runInventoryBatch(shop, crossIds, api);
+    const uncertain = await db.inventorySync.findMany({ where: { shop, supplierId: { in: crossIds } }, orderBy: { supplierId: "asc" } });
+    assert.ok(uncertain[0].pendingKey);
+    assert.ok(uncertain.every(state => state.pending === uncertain[0].pending && state.pendingKey === uncertain[0].pendingKey && state.cursor === 21));
+    assert.deepEqual(JSON.parse(uncertain[0].pending).participants, crossIds);
+    await db.inventorySync.updateMany({ where: { shop, supplierId: { in: crossIds } }, data: { status: "RUNNING" } });
+    await db.inventorySync.updateMany({ where: { shop, enabled: true, status: "RUNNING" }, data: { status: "QUEUED" } });
+    await inventoryControl(shop, 1900, "sync-now", api);
+    await runInventoryCycle(shop, 1900, api);
+    assert.deepEqual(mutationKeys.slice(-2), [uncertain[0].pendingKey, uncertain[0].pendingKey],
+      "single-product scheduling after restart expands the original group and replays its exact full input/key");
+    assert.equal((await db.inventorySync.findMany({ where: { shop, supplierId: { in: crossIds }, pendingKey: { not: null } } })).length, 0);
+
+    desired = 13; cursor = 23;
+    await syncCross();
+    loseResponse = true;
+    await runInventoryBatch(shop, crossIds, api);
+    await inventoryControl(shop, 1901, "pause", api);
+    await inventoryControl(shop, 1900, "sync-now", api);
+    const acknowledged = mutationRequests;
+    await runInventoryCycle(shop, 1900, api);
+    assert.equal(mutationRequests, acknowledged, "an already-applied cross-product correction is reconciled without any replay, even when a participant is paused");
+    assert.equal((await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 1901 } } })).status, "PAUSED");
+    assert.equal(await db.inventorySync.count({ where: { shop, supplierId: { in: crossIds }, pendingKey: { not: null } } }), 0);
+
+    await inventoryControl(shop, 1901, "enable", api, "inventory-only");
+    desired = 14; cursor = 24;
+    await syncCross();
+    loseBeforeMutation = true;
+    await runInventoryBatch(shop, crossIds, api);
+    const pausedPending = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 1900 } } });
+    await inventoryControl(shop, 1902, "pause", api);
+    await inventoryControl(shop, 1900, "sync-now", api);
+    const pausedRequests = mutationRequests;
+    await runInventoryCycle(shop, 1900, api);
+    assert.equal(mutationRequests, pausedRequests, "pausing any participant prevents replay of a shared unconfirmed mutation");
+    assert.equal(await db.inventorySync.count({ where: { shop, pendingKey: pausedPending.pendingKey } }), 5);
+    const pausedBulk = await enableAllInventory(shop, api, "inventory-all-current");
+    assert.ok(pausedBulk.blocked.some(product => product.supplierId === 1902 && /pending stock correction/.test(product.error)));
+    await inventoryControl(shop, 1902, "enable", api, "inventory-only");
+    await inventoryControl(shop, 1900, "sync-now", api);
+    await runInventoryCycle(shop, 1900, api);
+    assert.equal(mutationKeys.at(-1), pausedPending.pendingKey);
+    assert.equal(await db.inventorySync.count({ where: { shop, pendingKey: pausedPending.pendingKey } }), 0);
+
+    desired = 15; cursor = 25;
+    await syncCross();
+    rejectMutation = true;
+    await runInventoryBatch(shop, crossIds, api);
+    assert.equal(await db.inventorySync.count({ where: { shop, supplierId: { in: crossIds }, pendingKey: { not: null } } }), 0);
+    for (const id of crossIds) {
+      const state = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: id } } });
+      assert.equal(state.cursor, 24, "a rejected shared correction never advances any participant checkpoint");
+      assert.match(state.error, /concurrently/);
+    }
+    desired = 16; cursor = 26;
+    await syncCross();
+    const crossMissingProduct = products.get("gid://shopify/Product/1904");
+    products.delete("gid://shopify/Product/1904");
+    const missingCross = mutationSizes.length;
+    await runInventoryBatch(shop, crossIds, api);
+    assert.deepEqual(mutationSizes.slice(missingCross), [4], "a missing listing is paused while healthy products in the batch still synchronize");
+    const missingCrossState = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 1904 } } });
+    assert.equal(missingCrossState.enabled, false);
+    assert.equal(missingCrossState.status, "REVIEW");
+    products.set("gid://shopify/Product/1904", crossMissingProduct);
+    await inventoryControl(shop, 1904, "enable", api, "inventory-only");
+    desired = 17; cursor = 27;
+    feed.value = id => ({ ...source(id, [id * 10 + 1], desired, cursor), ...(id === 1903 ? { cursor: -1 } : {}) });
+    await syncCross();
+    const malformedBefore = mutationSizes.length;
+    await runInventoryBatch(shop, crossIds, api);
+    assert.deepEqual(mutationSizes.slice(malformedBefore), [4], "invalid per-product supplier data never becomes zero stock and does not block healthy siblings");
+    assert.equal(products.get("gid://shopify/Product/1903").nodes[0].inventoryItem.onHand, 16);
+    assert.equal((await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 1903 } } })).cursor, 26);
+    desired = 18; cursor = 28;
+    feed.value = id => source(id, [id * 10 + 1], desired, cursor);
+    await syncCross();
+    let pauseDuringRead = false;
+    feed.hook = async () => {
+      if (pauseDuringRead) return;
+      pauseDuringRead = true;
+      await inventoryControl(shop, 1900, "pause", api);
+    };
+    const pauseBefore = mutationSizes.length;
+    await runInventoryBatch(shop, crossIds, api);
+    feed.hook = null;
+    assert.deepEqual(mutationSizes.slice(pauseBefore), [4], "a pause before batch reservation excludes that product while healthy products continue");
+    assert.equal(products.get("gid://shopify/Product/1900").nodes[0].inventoryItem.onHand, 17);
+    assert.equal((await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 1900 } } })).pending, null);
+    await inventoryControl(shop, 1900, "enable", api, "inventory-only");
+
+    const largeIds = [2100, 2200, 2300, 2400, 2500];
+    const sources = new Map(largeIds.map((id, index) => [id, Array.from({ length: index === 0 ? 200 : index === 1 ? 100 : 1 }, (_, offset) => id * 10 + offset + 1)]));
+    for (const id of largeIds) {
+      await seed(id, sources.get(id));
+      await inventoryControl(shop, id, "enable", api, "inventory-only");
+    }
+    feed.value = id => source(id, sources.get(id), 17, 27);
+    const largeBefore = mutationSizes.length;
+    await runInventoryBatch(shop, largeIds, api);
+    assert.deepEqual(mutationSizes.slice(largeBefore), [250, 53], "303 quantities from five products share bounded 250/53 cross-product writes");
+    assert.equal(await db.inventorySync.count({ where: { shop, supplierId: { in: largeIds }, status: "SYNCED", cursor: 27 } }), 5);
+
+    for (let id = 2600; id < 2610; id++) await seed(id, [id * 10 + 1]);
+    let bulkRequests = 0;
+    const partial = await enableAllInventory(shop, async (query, variables) => {
+      if (query === INVENTORY_BATCH_QUERY && ++bulkRequests === 2) throw new Error("Injected Shopify connection interruption");
+      return api(query, variables);
+    }, "inventory-all-current");
+    assert.ok(partial.error);
+    assert.equal(partial.enabled, 3, "completed enrollment remains truthful when a later validation batch loses its connection");
+    assert.equal(partial.total, partial.enabled + partial.alreadyEnabled + partial.blocked.length);
+    assert.ok(partial.blocked.filter(product => product.supplierId >= 2603).every(product => /Not enabled:/.test(product.error)));
+    assert.equal(await db.inventorySync.count({ where: { shop, supplierId: { gte: 2600, lt: 2610 }, enabled: true } }), 3);
+
+    desired = 19; cursor = 29;
+    feed.value = id => source(id, [id * 10 + 1], desired, cursor);
+    await syncCross();
+    loseBeforeMutation = true;
+    await runInventoryBatch(shop, crossIds, api);
+    const expiredCorrection = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 1900 } } });
+    const expiredAt = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    await db.inventorySync.updateMany({ where: { shop, pendingKey: expiredCorrection.pendingKey },
+      data: { pendingAt: expiredAt, nextRunAt: new Date(0) } });
+    const expiredRequests = mutationRequests;
+    await runInventoryCycle(shop, 1900, api);
+    assert.equal(mutationRequests, expiredRequests, "an expired shared key is never replayed or silently reconciled away");
+    const expiredStates = await db.inventorySync.findMany({ where: { shop, pendingKey: expiredCorrection.pendingKey } });
+    assert.equal(expiredStates.length, 5);
+    assert.ok(expiredStates.every(state => !state.enabled && state.status === "REVIEW" && /24-hour/.test(state.error)));
+    await assert.rejects(inventoryControl(shop, 1900, "enable", api, "inventory-only"), /expired cross-product/);
+    assert.equal(await db.inventorySync.count({ where: { shop, pendingKey: expiredCorrection.pendingKey } }), 5);
+    await db.inventorySync.update({ where: { shop_supplierId: { shop, supplierId: 1904 } }, data: { pending: null, pendingKey: null, pendingAt: null } });
+    await db.inventorySync.update({ where: { shop_supplierId: { shop, supplierId: 1900 } },
+      data: { enabled: true, status: "QUEUED", nextRunAt: new Date(0) } });
+    await runInventoryCycle(shop, 1900, api);
+    assert.equal(mutationRequests, expiredRequests, "an incomplete shared ledger cannot be replayed with a changed subset");
+    assert.match((await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 1900 } } })).error, /incomplete or inconsistent/);
     auth.rejected = true;
     await assert.rejects(loader({ request: new Request("https://app.example/app/inventory") }), (error) => error.status === 403);
   } finally {

@@ -3,7 +3,7 @@ import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "re
 import { data, Form, Link, useActionData, useLoaderData, useLocation, useNavigation, useRevalidator, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticateLabAdmin } from "../shopify.server";
-import { inventoryControl, inventoryScreen } from "../inventory.server";
+import { enableAllInventory, inventoryControl, inventoryScreen } from "../inventory.server";
 import { InventoryError } from "../inventory-engine";
 import { supplierText } from "../catalog-policy";
 import { useWorkspace, WorkspaceNav } from "../workspace";
@@ -24,17 +24,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return values[0];
     };
     const intent = field("intent");
-    const id = field("supplierId");
-    if (!/^[1-9]\d*$/.test(id)) throw new InventoryError("Invalid supplier product ID.");
-    await inventoryControl(session.shop, Number(id), intent, async (query, variables) => {
+    const api = async (query: string, variables: Record<string, unknown>) => {
       const response = await admin.graphql(query, { variables, tries: 1 });
       return response.json();
-    }, intent === "enable" ? field("confirm") : undefined);
-    return data({ error: null, supplierId: Number(id), intent });
+    };
+    if (intent === "enable-all") {
+      if (form.has("supplierId")) throw new InventoryError("Bulk inventory enrollment applies to all current imported products, not individual IDs.");
+      const bulk = await enableAllInventory(session.shop, api, field("confirm"));
+      return data({ error: bulk.error, supplierId: null, intent, bulk }, { status: bulk.error ? 502 : 200 });
+    }
+    const id = field("supplierId");
+    if (!/^[1-9]\d*$/.test(id)) throw new InventoryError("Invalid supplier product ID.");
+    await inventoryControl(session.shop, Number(id), intent, api, intent === "enable" ? field("confirm") : undefined);
+    return data({ error: null, supplierId: Number(id), intent, bulk: null });
   } catch (error) {
     if (!(error instanceof InventoryError)) throw error;
     console.warn("Inventory control rejected.", error.message);
-    return data({ error: error.message, supplierId: null, intent: null }, { status: 400 });
+    return data({ error: error.message, supplierId: null, intent: null, bulk: null }, { status: 400 });
   }
 };
 
@@ -72,6 +78,28 @@ export default function Inventory() {
           <button type="button" aria-pressed={filter === "enabled"} onClick={() => setFilter("enabled")}><strong>{enabled}</strong> Sync on</button>
           <button type="button" aria-pressed={filter === "review"} onClick={() => setFilter("review")}><strong>{needsReview}</strong> Need review</button>
         </div>
+        {products.length > 0 && <section className="workspace-panel" aria-label="Enable all imported inventory">
+          <h2>Enable inventory sync for all</h2>
+          <p>Apply to all {products.length} currently imported products, regardless of the search or filter below.
+            Already-enabled products stay unchanged. Listings with missing mappings, running cycles or protected stock corrections are skipped with a reason.
+            Future imports still require explicit enrollment.</p>
+          <Form method="post">
+            <input type="hidden" name="intent" value="enable-all" />
+            <label className="checkbox-label"><span><input type="checkbox" name="confirm" value="inventory-all-current" required disabled={busy} />
+              I approve inventory-only sync for all currently imported eligible products. Prices and publication stay unchanged.</span></label>
+            <s-button type="submit" variant="primary" disabled={busy || enabled === products.length}
+              loading={busy && navigation.formData?.get("intent") === "enable-all"}>Enable inventory sync for all</s-button>
+            {busy && navigation.formData?.get("intent") === "enable-all" && <p role="status">Verifying all imported listings and enabling eligible products. This can take a moment for a large catalog.</p>}
+          </Form>
+          {result?.bulk && <div role="status">
+            <p>{result.bulk.enabled} products enabled; {result.bulk.alreadyEnabled} already enabled; {result.bulk.blocked.length} skipped out of {result.bulk.total} imported products.</p>
+            {result.bulk.blocked.length > 0 && <details open><summary>Review skipped products</summary><ul>
+              {result.bulk.blocked.map((product) => <li key={product.supplierId}>
+                <strong>{supplierText(product.name)}</strong> ({product.sku}): {product.error}
+              </li>)}
+            </ul></details>}
+          </div>}
+        </section>}
         <section className="workspace-panel" aria-label="Imported inventory">
         <div className="catalog-filters">
           <label>Search imported products<input type="search" value={search} onChange={(event) => setSearch(event.currentTarget.value)} maxLength={100} /></label>
@@ -79,15 +107,19 @@ export default function Inventory() {
           <span>{visible.length} of {products.length} products</span>
         </div>
         <details className="inventory-policy"><summary>How inventory sync works</summary>
-          <p>Inventory sync is opt-in per product. Enabled products run about every five minutes, after queued imports.
+          <p>Inventory sync is opt-in: enable individual products or confirm all currently imported eligible products.
+            Enabled products are scheduled about every five minutes, after queued imports, in bounded cross-product batches.
             Sync changes supplier-backed on-hand stock only. Shopify order reservations remain in place.
             Prices, descriptions, publication and order forwarding are not changed.</p>
           <p>Unknown, unmanaged, shared, out-of-stock or withdrawn supplier inventory becomes zero with review warnings where needed.
             New supplier variants are not added automatically. Pause stops new updates; an update already sent to Shopify may finish.
             Changing catalog selections does not pause enrolled products.</p>
+          <p>If a cross-product stock correction has an uncertain response, its exact request is retained for every participating product.
+            Pausing any participant prevents replay until the participating products are verified and resumed.
+            Products with a protected correction are not resumed by Enable all.</p>
         </details>
         {result?.error && <p role="alert">{result.error}</p>}
-        {result?.intent && <p role="status">{result.intent === "pause" ? "Sync paused" : result.intent === "enable" ? "Inventory sync enabled" : "Inventory update queued"} for {supplierText(products.find((product) => product.supplierId === result.supplierId)?.name || "this product")}.</p>}
+        {result?.intent && result.intent !== "enable-all" && <p role="status">{result.intent === "pause" ? "Sync paused" : result.intent === "enable" ? "Inventory sync enabled" : "Inventory update queued"} for {supplierText(products.find((product) => product.supplierId === result.supplierId)?.name || "this product")}.</p>}
         {!products.length && <div className="workspace-empty"><h2>No imported products yet</h2><p>Import products before enabling inventory synchronization.</p><Link className="workspace-primary" to={catalogHref}>Browse catalog</Link></div>}
         {products.length > 0 && !visible.length && <div className="workspace-empty"><h2>No matching imported products</h2><button type="button" onClick={() => { setSearch(""); setFilter("all"); }}>Clear filters</button></div>}
         {visible.length > 0 && <>

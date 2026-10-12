@@ -4,6 +4,10 @@ Separate web interface for the existing **UltraLove Dropshipping Lab** app,
 scaffolded from Shopify's MIT-licensed React Router template. The upstream
 license remains in [LICENSE.md](LICENSE.md).
 
+For a client-facing overview, login instructions and demonstration walkthrough,
+see [the client guide](CLIENT-GUIDE.md). Arrange client store access separately;
+the guide intentionally contains no passwords or private credentials.
+
 ## Status
 
 The embedded catalog browser and saved selections are deployed and connected
@@ -935,6 +939,63 @@ and worker rather than only the foundation. Source merges do not deploy changes:
 the running release below was deployed from a git archive independently.
 Production rollout and independent retailer onboarding require separate work
 and approval.
+
+## Bulk inventory enrollment and cross-product batches (pending deployment)
+
+The next release adds **Enable inventory sync for all** to Inventory. Its required
+confirmation covers every currently imported eligible product, not just the
+current search/filter. Already-enabled products retain their exact schedule and
+revision; running or unverified listings and protected uncertain corrections are
+not resumed or reset. The response reports enabled, already-enabled and skipped
+counts with per-product reasons. An interrupted validation batch returns an
+error and the exact partial result rather than claiming all products succeeded.
+Future imports remain opt-in. Individual enable, pause and Sync now controls
+remain available.
+
+Normal worker cycles select up to five due products, retaining import priority.
+They share one approved shop/location lookup, bounded Shopify `nodes` reads,
+and a supplier SSH inventory operation. Shopify first pages contain up to 25
+variants per product to bound requested query cost; larger products continue
+through 100-variant pages, retaining the 2,048-variant per-product limit.
+Supplier parent lookups and journal advancement are shared across products;
+inventory source IDs are deduplicated into feed requests of at most 100 IDs.
+Each product retains its own checkpoint, which advances only after stock
+verification. Missing or invalid product records do not turn into invented
+stock or prevent independently verifiable siblings from synchronizing.
+
+Changed quantities from different products share Shopify corrections of at
+most 250 quantities. Before dispatch, one SQLite transaction saves the same
+complete request, participant list, idempotency key and timestamp on every
+participating enrollment. Existing single-product pending corrections remain
+compatible; no schema migration is required. Recovery reads the original
+participants, including members outside the currently scheduled subset, and
+never retries a shortened or changed mutation with the original key.
+An acknowledged-but-lost write is confirmed from remote quantities without
+resending. A paused or changed participant prevents an unconfirmed shared
+correction from being replayed; already-confirmed quantities can be reconciled
+without modifying paused stock. Confirmed Shopify rejection clears the shared
+pending request so a later cycle can create a fresh compare-and-set correction.
+
+An uncertain cross-product request older than Shopify's 24-hour retry window
+pauses the participants for operator review and retains all correction records.
+Unlike explicit single-product restart, individual enrollment cannot erase an
+expired shared request. The operator must review every participating listing
+and the full persisted operation together before clearing the group and
+approving fresh inventory-only enrollment. Incomplete or inconsistent group
+records also block replay. No automatic replacement or enrollment repair occurs.
+
+Validation covers 300-product bulk scope, truthful partial enrollment,
+five-product request-count reductions, 250/53 cross-product correction bounds,
+2,048-variant pagination, reservations and retailer-field preservation,
+pause-before-dispatch, missing/malformed siblings, uncertain responses,
+restart/idempotent recovery and shared-key expiry/incomplete-ledger protection.
+
+**Not live yet:** deploy the updated WordPress development feed client and
+restricted catalog proxy **before** the app/worker release. The new proxy
+operation is `inventory-sync-batch`; the existing `inventory-sync` operation
+remains compatible. Do not enable production or bulk-enroll lab products as
+part of deployment verification without explicit approval. The currently
+deployed release and prior verification records below remain unchanged.
 
 ## Current host and rollback
 

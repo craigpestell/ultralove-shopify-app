@@ -9,6 +9,7 @@ export class InventoryProductMissingError extends InventoryError {
   }
 }
 export const INVENTORY_INTERVAL = 5 * 60 * 1000;
+export const INVENTORY_PRODUCT_BATCH_SIZE = 5;
 
 export type Mapping = { sourceId: number; variantId: string; inventoryItemId: string };
 export type RemoteInventory = Mapping & { onHand: number; committed: number };
@@ -106,16 +107,20 @@ export function inventoryFeed(value: unknown, parentId: number, previous: Checkp
   return { ...next, parent_id: parentId, published: data.published, source_ids: ids, inventory, resynced: data.resynced };
 }
 
-export const INVENTORY_QUERY = `query SyncInventoryProduct($id:ID!,$location:ID!,$after:String) {
-  product(id:$id) {
+const inventoryProductFields = (pageSize: 25 | 100) => `
     id handle tags supplierId:metafield(namespace:"ultralove_catalog",key:"supplier_id"){value}
-    variants(first:100,after:$after) { nodes {
+    variants(first:${pageSize},after:$after) { nodes {
       id supplierId:metafield(namespace:"ultralove_catalog",key:"supplier_id"){value}
       inventoryItem { id tracked inventoryLevel(locationId:$location) {
         quantities(names:["on_hand","committed"]) { name quantity }
       } }
-    } pageInfo { hasNextPage endCursor } }
+    } pageInfo { hasNextPage endCursor } }`;
+export const INVENTORY_QUERY = `query SyncInventoryProduct($id:ID!,$location:ID!,$after:String) {
+  product(id:$id) { ${inventoryProductFields(100)}
   }
+}`;
+export const INVENTORY_BATCH_QUERY = `query SyncInventoryProducts($ids:[ID!]!,$location:ID!,$after:String) {
+  nodes(ids:$ids) { ... on Product { ${inventoryProductFields(25)} } }
 }`;
 export const INVENTORY_SET_MUTATION = `mutation SyncInventoryStock($input:InventorySetQuantitiesInput!,$key:String!) {
   inventorySetQuantities(input:$input) @idempotent(key:$key) {
@@ -131,14 +136,16 @@ async function request(api: GraphQL, query: string, variables: Record<string, un
   }
   return object(response.data);
 }
-export async function remoteInventory(api: GraphQL, productId: string, parentId: number, locationId: string): Promise<RemoteInventory[]> {
+export async function remoteInventory(api: GraphQL, productId: string, parentId: number, locationId: string,
+  firstPage?: { product: unknown }): Promise<RemoteInventory[]> {
   gid(productId, "Product");
   gid(locationId, "Location");
   const variants: RemoteInventory[] = [];
   const cursors = new Set<string>();
   let after: string | null = null;
-  for (let page = 0; page < 21; page++) {
-    const data = await request(api, INVENTORY_QUERY, { id: productId, location: locationId, after });
+  // Batched first pages are smaller to bound Shopify's requested query cost.
+  for (let page = 0; page < (firstPage ? 22 : 21); page++) {
+    const data = page === 0 && firstPage ? firstPage : await request(api, INVENTORY_QUERY, { id: productId, location: locationId, after });
     if (data.product === null) throw new InventoryProductMissingError();
     const product = object(data.product);
     if (product.id !== productId || !ownedProduct({
@@ -152,7 +159,7 @@ export async function remoteInventory(api: GraphQL, productId: string, parentId:
     }
     const connection = object(product.variants);
     const nodes = list(connection.nodes);
-    if (nodes.length > 100) throw new InventoryError("Shopify inventory page exceeded its limit.");
+    if (nodes.length > (page === 0 && firstPage ? 25 : 100)) throw new InventoryError("Shopify inventory page exceeded its limit.");
     for (const entry of nodes) {
       const variant = object(entry);
       const source = text(object(variant.supplierId).value);
@@ -182,6 +189,31 @@ export async function remoteInventory(api: GraphQL, productId: string, parentId:
     after = cursor;
   }
   throw new InventoryError("Shopify inventory pagination exceeded its review limit.");
+}
+export type InventoryRead = { supplierId: number; inventory: RemoteInventory[] } | { supplierId: number; error: InventoryError };
+export async function remoteInventories(api: GraphQL, products: { supplierId: number; productId: string }[],
+  locationId: string): Promise<InventoryRead[]> {
+  if (!products.length || products.length > INVENTORY_PRODUCT_BATCH_SIZE ||
+      new Set(products.map((product) => sourceId(product.supplierId))).size !== products.length ||
+      new Set(products.map((product) => gid(product.productId, "Product"))).size !== products.length) {
+    throw new InventoryError("Request 1-5 distinct imported inventory products per Shopify read.");
+  }
+  gid(locationId, "Location");
+  const nodes = products.length === 1 ? null : list((await request(api, INVENTORY_BATCH_QUERY, {
+    ids: products.map((product) => product.productId), location: locationId, after: null,
+  })).nodes);
+  if (nodes && nodes.length !== products.length) throw new InventoryError("Shopify returned an incomplete inventory product batch.");
+  const results: InventoryRead[] = [];
+  for (const [index, product] of products.entries()) {
+    try {
+      results.push({ supplierId: product.supplierId, inventory: await remoteInventory(api, product.productId,
+        product.supplierId, locationId, nodes ? { product: nodes[index] } : undefined) });
+    } catch (error) {
+      if (!(error instanceof InventoryError)) throw error;
+      results.push({ supplierId: product.supplierId, error });
+    }
+  }
+  return results;
 }
 export function verifyMappings(saved: Mapping[], current: RemoteInventory[]) {
   if (JSON.stringify(mappings(saved)) !== JSON.stringify(mappings(current))) {
@@ -230,6 +262,9 @@ export function stockOperation(value: unknown): StockOperation {
 export async function setStock(api: GraphQL, value: StockOperation, key: string) {
   if (!/^[a-f0-9]{32}$/.test(key)) throw new InventoryError("Invalid persisted inventory idempotency key.");
   const input = stockOperation(value);
+  if (input.referenceDocumentUri !== `gid://ultralove/InventorySync/${key}`) {
+    throw new InventoryError("Inventory correction reference does not match its persisted idempotency key.");
+  }
   // Preserve saved corrections while adapting the renamed Shopify API field.
   const requestInput = { ...input, quantities: input.quantities.map(({ compareQuantity, ...quantity }) => ({
     ...quantity, changeFromQuantity: compareQuantity,

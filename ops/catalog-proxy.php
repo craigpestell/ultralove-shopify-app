@@ -3,12 +3,14 @@ if ( PHP_SAPI !== 'cli' || defined( 'ABSPATH' ) || getenv( 'SSH_ORIGINAL_COMMAND
     exit( 1 );
 }
 try {
-    $input = stream_get_contents( STDIN, 4097 );
-    if ( strlen( $input ) > 4096 ) {
+    // Fifty bounded ID/checkpoint pairs can exceed the old single-request limit.
+    $input = stream_get_contents( STDIN, 8193 );
+    if ( strlen( $input ) > 8192 ) {
         throw new RuntimeException( 'Catalog request exceeds its limit.' );
     }
     $request = json_decode( $input, true, 512, JSON_THROW_ON_ERROR );
-    if ( ! is_array( $request ) || array_diff( array_keys( $request ), array( 'operation', 'filters', 'ids', 'location', 'run', 'markup', 'checkpoint' ) ) ) {
+    if ( ! is_array( $request ) || array_diff( array_keys( $request ), array( 'operation', 'filters', 'ids', 'location', 'run', 'markup', 'checkpoint', 'checkpoints' ) )
+        || ( array_key_exists( 'checkpoints', $request ) && ( $request['operation'] ?? '' ) !== 'inventory-sync-batch' ) ) {
         throw new RuntimeException( 'Invalid catalog operation.' );
     }
     require '/var/www/html/wp-content/plugins/ultralove-shopify-supplier/includes/class-feed-client.php';
@@ -74,6 +76,16 @@ try {
                 throw new InvalidArgumentException( 'Invalid inventory synchronization request.' );
             }
             $result = $client->inventory_state( $request['ids'][0], $request['checkpoint'] ?? null );
+            break;
+        case 'inventory-sync-batch':
+            if ( ! method_exists( $client, 'inventory_states' ) ) {
+                throw new RuntimeException( 'Supplier batch inventory synchronization is not provisioned.' );
+            }
+            if ( array_diff( array_keys( $request ), array( 'operation', 'ids', 'checkpoints' ) )
+                || ! is_array( $request['ids'] ?? null ) || ! is_array( $request['checkpoints'] ?? null ) ) {
+                throw new InvalidArgumentException( 'Invalid batch inventory synchronization request.' );
+            }
+            $result = $client->inventory_states( $request['ids'], $request['checkpoints'] );
             break;
         case 'import-plan':
             if ( ! is_string( $request['location'] ?? null ) || ! is_string( $request['run'] ?? null )

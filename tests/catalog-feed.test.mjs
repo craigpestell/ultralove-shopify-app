@@ -3,7 +3,7 @@ import { test } from "node:test";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { PassThrough } from "node:stream";
-import { CatalogError, inventoryState, productsPage, categoriesPage, selectedProducts, validateSelection } from "../app/catalog.server.ts";
+import { CatalogError, inventoryState, inventoryStates, productsPage, categoriesPage, selectedProducts, validateSelection } from "../app/catalog.server.ts";
 
 const product = {
   id: 1, parent_id: 0, name: "Supplier product", sku: "SKU-1", type: "simple",
@@ -129,6 +129,39 @@ test("restricted inventory transport accepts only bounded structured rate-limit 
     assert.equal(options.timeout, 150000);
     queueMicrotask(() => callback(Object.assign(new Error("SSH failed"), { code: 1 }), output));
     return { stdin: new PassThrough() };
+  });
+
+  test("inventory batching uses one restricted supplier operation and requires every exact parent identity", async () => {
+    const generation = "00000000-0000-4000-8000-000000000001";
+    const products = [100, 200, 300, 400, 500].map((supplierId, index) => ({
+      supplierId, checkpoint: index ? { generation, cursor: index } : null,
+    }));
+    let calls = 0;
+    const results = products.map(product => ({ parent_id: product.supplierId }));
+    assert.deepEqual(await inventoryStates(products, async (request) => {
+      calls++;
+      assert.deepEqual(request, { operation: "inventory-sync-batch", ids: products.map(product => product.supplierId),
+        checkpoints: Object.fromEntries(products.map(product => [product.supplierId, product.checkpoint])) });
+      return { results: results.toReversed() };
+    }), results);
+    assert.equal(calls, 1, "five products really share one supplier SSH request");
+    for (const response of [
+      { results: results.slice(1) }, { results: [results[0], ...results.slice(0, -1)] },
+      { results: [{ parent_id: "100" }, ...results.slice(1)] },
+      { results: [{ parent_id: 999 }, ...results.slice(1)] }, { results: [null, ...results.slice(1)] },
+      null, { products: results },
+    ]) await assert.rejects(inventoryStates(products, async () => response), CatalogError);
+    for (const input of [[], [products[0], products[0]], [{ supplierId: -1, checkpoint: null }],
+      Array.from({ length: 51 }, (_, index) => ({ supplierId: index + 1, checkpoint: null }))]) {
+      await assert.rejects(inventoryStates(input, async () => { throw new Error("Invalid bounds must not reach supplier"); }), CatalogError);
+    }
+    const single = await inventoryStates([products[0]], async request => {
+      assert.deepEqual(request, { operation: "inventory-sync", ids: [100], checkpoint: null });
+      return results[0];
+    });
+    assert.deepEqual(single, [results[0]], "single-product transport remains compatible with the installed proxy");
+    await assert.rejects(inventoryStates(products, async () => { throw new CatalogError("Supplier rate limit", 3600); }),
+      error => error.retryAfter === 3600);
   });
   syncBuiltinESMExports();
   try {

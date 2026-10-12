@@ -165,3 +165,22 @@ export async function importPlan(ids: number[], location: string, run: string, m
 export async function inventoryState(id: number, checkpoint: { generation: string; cursor: number } | null, transport: Transport = sshTransport): Promise<unknown> {
   return transport({ operation: "inventory-sync", ids: [id], checkpoint });
 }
+
+export async function inventoryStates(products: { supplierId: number; checkpoint: { generation: string; cursor: number } | null }[],
+  transport: Transport = sshTransport): Promise<unknown[]> {
+  const ids = products.map((product) => product.supplierId);
+  if (!ids.length || ids.length > 50 || ids.some((id) => !Number.isInteger(id) || id < 1 || id > 2147483647) ||
+      new Set(ids).size !== ids.length) throw new CatalogError("Request 1-50 distinct supplier inventory products per batch.");
+  if (products.length === 1) return [await inventoryState(ids[0], products[0].checkpoint, transport)];
+  const response = await transport({ operation: "inventory-sync-batch", ids,
+    checkpoints: Object.fromEntries(products.map((product) => [product.supplierId, product.checkpoint])) });
+  if (!object(response) || !Array.isArray(response.results) || response.results.length !== ids.length) {
+    throw new CatalogError("Supplier returned an incomplete inventory batch; no new checkpoints were accepted.");
+  }
+  const results = response.results;
+  if (results.some((result: unknown) => !object(result) || typeof result.parent_id !== "number" || !ids.includes(result.parent_id)) ||
+      new Set(results.map((result: unknown) => object(result) ? result.parent_id : null)).size !== ids.length) {
+    throw new CatalogError("Supplier inventory batch identities are invalid or duplicated.");
+  }
+  return ids.map((id) => results.find((result: unknown) => object(result) && result.parent_id === id));
+}

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  inventoryFeed, mappings, remoteInventory, stockOperation, stockPlan, setStock,
-  INVENTORY_QUERY, INVENTORY_SET_MUTATION, InventoryMutationError, InventoryProductMissingError, verifyMappings,
+  inventoryFeed, mappings, remoteInventory, remoteInventories, stockOperation, stockPlan, setStock,
+  INVENTORY_QUERY, INVENTORY_BATCH_QUERY, INVENTORY_SET_MUTATION, InventoryError, InventoryMutationError, InventoryProductMissingError, verifyMappings,
 } from "../app/inventory-engine.ts";
 
 const generation = "00000000-0000-4000-8000-000000000001";
@@ -70,6 +70,61 @@ test("stock mutations use persisted idempotency and compare-and-set with a maxim
   await assert.rejects(setStock(async () => ({ errors: [{ message: "Missing inventory permission" }] }), input, key), /permission/);
   assert.throws(() => stockOperation({ ...input, quantities: Array(251).fill(input.quantities[0]) }));
   assert.throws(() => stockOperation({ ...input, name: "available" }));
+  await assert.rejects(setStock(async () => { throw new Error("Mismatched identity must not reach Shopify"); },
+    input, "b".repeat(32)), /reference does not match/);
+});
+
+test("cross-product inventory reads use bounded node queries, isolate missing listings and preserve full variant pagination", async () => {
+  const products = [100, 200, 300, 400, 500].map(supplierId => ({ supplierId, productId: `gid://shopify/Product/${supplierId}` }));
+  const product = (id, offset, length) => ({
+    id: `gid://shopify/Product/${id}`, handle: `ultralove-catalog-${id}`, supplierId: { value: String(id) },
+    tags: ["ultralove-catalog-import", `ultralove-catalog-run-${"a".repeat(32)}`],
+    variants: {
+      nodes: Array.from({ length }, (_, index) => {
+        const source = id * 10000 + offset + index + 1;
+        return { id: `gid://shopify/ProductVariant/${source}`, supplierId: { value: String(source) },
+          inventoryItem: { id: `gid://shopify/InventoryItem/${source}`, tracked: true,
+            inventoryLevel: { quantities: [{ name: "on_hand", quantity: 7 }, { name: "committed", quantity: 2 }] } } };
+      }),
+      pageInfo: { hasNextPage: id === 100 && offset + length < 2048, endCursor: String(offset + length) },
+    },
+  });
+  const calls = [];
+  const reads = await remoteInventories(async (query, variables) => {
+    calls.push(variables);
+    if (query === INVENTORY_BATCH_QUERY) {
+      assert.match(query, /variants\(first:25/);
+      assert.deepEqual(variables.ids, products.map(product => product.productId));
+      return { data: { nodes: [product(100, 0, 25), null, product(300, 0, 1), product(400, 0, 1), product(500, 0, 1)] } };
+    }
+    assert.equal(query, INVENTORY_QUERY);
+    assert.equal(variables.id, products[0].productId);
+    const offset = Number(variables.after);
+    return { data: { product: product(100, offset, Math.min(100, 2048 - offset)) } };
+  }, products, location);
+  assert.equal(calls.length, 22, "one shared first read plus 21 bounded tail reads includes all 2048 variants");
+  assert.equal(reads[0].inventory.length, 2048);
+  assert.ok(reads[1].error instanceof InventoryProductMissingError);
+  assert.equal(reads[2].inventory[0].committed, 2);
+  assert.equal(reads[3].inventory.length, 1);
+  for (const nodes of [[], [product(100, 0, 1)], products.map(() => ({}))]) {
+    if (nodes.length !== products.length) {
+      await assert.rejects(remoteInventories(async () => ({ data: { nodes } }), products, location), /incomplete/);
+    } else {
+      const invalid = await remoteInventories(async () => ({ data: { nodes } }), products, location);
+      assert.ok(invalid.every(read => read.error instanceof InventoryError && !(read.error instanceof InventoryProductMissingError)));
+    }
+  }
+  await assert.rejects(remoteInventories(async () => ({ errors: [{ message: "Access denied" }], data: { nodes: [null, null] } }),
+    products.slice(0, 2), location), error => error instanceof InventoryError && !(error instanceof InventoryProductMissingError));
+  const oversized = await remoteInventories(async () => ({ data: { nodes: [product(100, 0, 26), product(200, 0, 1)] } }),
+    products.slice(0, 2), location);
+  assert.match(oversized[0].error.message, /page exceeded/);
+  assert.equal(oversized[1].inventory.length, 1);
+  for (const invalid of [[], [...products, { supplierId: 600, productId: "gid://shopify/Product/600" }],
+    [products[0], products[0]], [{ supplierId: -1, productId }]]) {
+    await assert.rejects(remoteInventories(async () => { throw new Error("Invalid bounds must not reach Shopify"); }, invalid, location), InventoryError);
+  }
 });
 test("Shopify mapping discovery guards ownership, tracking and all variant pages", async () => {
   const remote = {

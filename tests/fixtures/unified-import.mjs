@@ -10,7 +10,8 @@ export const detailsControl = {fail:false,calls:[]};
 export const jobs = [];
 export function save(input) { saved = {...saved, selected:JSON.parse(input.productIds), markup:input.markup, markups:JSON.parse(input.markups)}; }
 export const products = Array.from({length:${process.env.UX_FIXTURE_LARGE_SELECTION ? 300 : 55}},(_,index)=>(index+1)*100).map(id=>({id,name:({"100":"Amber travel case","200":"Rose wellness kit","300":"Satin gift set"})[id]||"Fixture product "+id,type:id===300?"variable":"simple",sku:"SKU-"+id,price:"12.50",currency:"CAD",images:[],manage_stock:true,stock_owner_id:id,stock_quantity:10}));
-export const inventory = [100,200].map(supplierId=>({supplierId,name:products.find(p=>p.id===supplierId).name,sku:"SKU-"+supplierId,productId:"gid://shopify/Product/"+supplierId,enabled:supplierId===100,status:supplierId===100?"SYNCED":"NOT_ENROLLED",variantCount:1,error:null,lastSuccessAt:supplierId===100?new Date().toISOString():null,nextRunAt:null}));
+export const inventory = ${process.env.UX_FIXTURE_LARGE_SELECTION ? "products.map(p=>p.id)" : "[100,200]"}.map(supplierId=>({supplierId,name:products.find(p=>p.id===supplierId).name,sku:"SKU-"+supplierId,productId:"gid://shopify/Product/"+supplierId,enabled:supplierId===100,status:supplierId===100?"SYNCED":supplierId===300?"REVIEW":"NOT_ENROLLED",variantCount:1,error:supplierId===300?"The linked Shopify product could not be found.":null,lastSuccessAt:supplierId===100?new Date().toISOString():null,nextRunAt:null}));
+export const inventoryActions = [];
 export function screen(id) {
   const job = jobs.find(job=>job.id===id)||null;
   return {...saved,job,history:jobs.map(job=>({...job,completed:job.items.filter(item=>["CREATED","REUSED","UPDATED","LINKED"].includes(item.status)).length,total:job.items.length}))};
@@ -83,8 +84,20 @@ const server = await createServer({
         export const importScreen=async(shop,id)=>screen(id);
         export const createPreview=async(shop,markup,api,choices,configuration,policy)=>preview(markup,choices,configuration,policy);
         export const queueJob=async(shop,id,retry,confirmation)=>queue(id,retry,confirmation);`;
-      if (id.endsWith("/app/inventory.server.ts")) return `import {inventory} from "virtual:ux-state";
+      if (id.endsWith("/app/inventory.server.ts")) return `import {inventory,inventoryActions} from "virtual:ux-state";
+        import {InventoryError} from "/app/inventory-engine.ts";
         export const inventoryScreen=async()=>inventory;
+        export async function enableAllInventory(shop,admin,confirm) {
+          if(confirm!=="inventory-all-current")throw new InventoryError("Confirmation required");
+          const result={total:inventory.length,enabled:0,alreadyEnabled:0,blocked:[],error:null};
+          inventoryActions.push({intent:"enable-all",ids:inventory.map(p=>p.supplierId)});
+          for(const product of inventory) {
+            if(product.enabled){result.alreadyEnabled++;continue;}
+            if(product.error){result.blocked.push({...product,error:product.error});continue;}
+            product.enabled=true;product.status="QUEUED";result.enabled++;
+          }
+          return result;
+        }
         export async function inventoryControl(shop,id,intent,admin,confirm){const product=inventory.find(p=>p.supplierId===id);if(!product)throw new Error("Unknown product");
           if(intent==="enable"&&confirm!=="inventory-only")throw new Error("Confirmation required");product.enabled=intent!=="pause";product.status=intent==="pause"?"PAUSED":"QUEUED";}`;
       if (id.endsWith("/app/catalog.server.ts")) return `import {products,detailsControl} from "virtual:ux-state";
