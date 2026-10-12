@@ -160,6 +160,10 @@ The app explains that a selected product or variant is no longer published or
 available instead of presenting it as a temporary connection outage.
 Genuine transport failures and the existing bounded rate-limit handling remain
 unchanged; no partial selection or import data is accepted.
+This error-message fix is deployed as lab release `5fbb5cb`. Read-only live
+checks verified valid product details and the corrected rejection through
+details, selection validation and import planning. The supplier proxy's protected
+rollback copy is `/var/backups/ultralove-catalog-proxy.before-5fbb5cb.php` on dev.
 
 Polaris validation passed for the catalog, review and recovery components.
 The inventory route's standalone toolkit validator cannot resolve the existing
