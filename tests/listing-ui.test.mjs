@@ -32,6 +32,12 @@ test("listing review shows selected updates, immutable differences and actionabl
       return renderToStaticMarkup(createElement(StaticRouterProvider, { context, router: createStaticRouter(handler.dataRoutes, context) }));
     };
     const updated = await render(job);
+    assert.match(updated, /<td><span class="catalog-money">10\.00 CAD<\/span><\/td>/);
+    assert.match(updated, /<td><strong class="catalog-money">12\.50 CAD<\/strong><\/td>/);
+    const ranges = await render({ ...job, items: [{ ...job.items[0],
+      wholesale: "0.44 - 1,234.50 CAD", retail: "0.55 - 1,543.13 CAD" }] });
+    assert.match(ranges, /<span class="catalog-money">0\.44 - 1,234\.50 CAD<\/span>/);
+    assert.match(ranges, /<strong class="catalog-money">0\.55 - 1,543\.13 CAD<\/strong>/);
     assert.match(updated, /Update selected fields/);
     assert.match(updated, /Retailer title/);
     assert.match(updated, /Review 1 proposed change\(s\)/);
@@ -66,6 +72,8 @@ test("listing review shows selected updates, immutable differences and actionabl
     assert.match(changed, /Your selection, pricing, or import choices have changed/);
     assert.match(changed, /<input(?=[^>]*name="confirm")(?=[^>]*disabled="")[^>]*>/);
     const completed = await render({ ...job, status: "COMPLETE", items: [{ ...job.items[0], status: "UPDATED" }] });
+    assert.match(completed, /<span class="catalog-money">10\.00 CAD<\/span>/);
+    assert.match(completed, /<strong class="catalog-money">12\.50 CAD<\/strong>/);
     assert.match(completed, /1 of 1 products completed/);
     assert.match(completed, /Updated from UltraLove/);
     assert.match(completed, /1 applied change\(s\)/);

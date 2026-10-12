@@ -123,7 +123,7 @@ export default function ImportResults({ job, history, ids, markup, markups, fulf
               <small>{fulfillmentLabel(item.fulfillmentMode)}</small>
               {item.fulfillmentMode === "CATALOG" && <small>No supplier quantities imported; supplier sync unavailable.</small>}</td>
             <td>{item.markup}%{job.markups[item.supplierId] !== undefined && <small>Product override</small>}</td>
-            <td>{item.wholesale}</td><td><strong>{item.retail}</strong>{item.productId && (job.listingPolicy.mode === "KEEP" || !job.listingPolicy.prices) && ["KEEP", "LINK", "UPDATE"].includes(item.listing.action) && <small>Not applied to existing listing</small>}</td>
+            <td><span className="catalog-money">{item.wholesale}</span></td><td><strong className="catalog-money">{item.retail}</strong>{item.productId && (job.listingPolicy.mode === "KEEP" || !job.listingPolicy.prices) && ["KEEP", "LINK", "UPDATE"].includes(item.listing.action) && <small>Not applied to existing listing</small>}</td>
             <td><span className="status-badge">{job.status === "PREVIEW" ? ({
               CREATE: "Ready for import", KEEP: "Existing listing kept", UPDATE: "Update selected fields",
               LINK: job.listingPolicy.mode === "UPDATE" ? "Connect and update" : "Connect existing listing",

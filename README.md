@@ -274,8 +274,11 @@ Status refreshes automatically and shows per-product results and Shopify links.
 Failed jobs can be retried/reconciled on the same page using their original
 snapshot, not the current working settings.
 Pricing snapshots and import results show 25 products per page, with name,
-SKU and supplier-ID search. Confirmation and **Retry unfinished items** appear
-above the table and apply to the entire immutable snapshot, not the visible
+SKU and supplier-ID search.
+Wholesale and retail currency values, including variant price ranges, stay on
+one line; product descriptions and review notes can still wrap normally.
+Confirmation and **Retry unfinished items** appear above the table and apply
+to the entire immutable snapshot, not the visible
 page or search results. Completed products are skipped during retry.
 By default, existing recognized listings are kept without any mutation,
 including their retailer-edited prices, content, inventory and publication state.

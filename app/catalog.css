@@ -18,6 +18,7 @@
 .catalog-confirmation s-button { margin-top: 12px; }
 .catalog-browser { min-width: 0; overflow-wrap: anywhere; }
 .catalog-table td { font-variant-numeric: tabular-nums; }
+.catalog-table .catalog-money { white-space: nowrap; }
 .catalog-filters > label { min-width: 0; }
 @media (max-width: 600px) {
   .catalog-filters > label { width: 100%; }
