@@ -9,15 +9,18 @@ import { selectedPage, statusLabel } from "./workspace-policy";
 import { listingSignature } from "./listing-policy";
 import type { ListingPolicy } from "./listing-policy";
 import ListingRecovery from "./listing-recovery";
+import { fulfillmentLabel, fulfillmentSignature } from "./fulfillment-policy";
+import type { FulfillmentModes } from "./fulfillment-policy";
 
 type Screen = Awaited<ReturnType<typeof importScreen>>;
 const timestamp = (value: string) => new Date(value).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" });
 
-export default function ImportResults({ job, history, ids, markup, markups, listingPolicy, activeChoice, publishChoice, busy, jobHref, mode, selectionHref, catalogHref, inventoryHref, onRecoveryPreview = () => {} }:
+export default function ImportResults({ job, history, ids, markup, markups, fulfillmentModes = {}, listingPolicy, activeChoice, publishChoice, busy, jobHref, mode, selectionHref, catalogHref, inventoryHref, onRecoveryPreview = () => {} }:
   Pick<Screen, "job" | "history"> & {
     ids: number[]; markup: string; markups: MarkupOverrides; busy: boolean; jobHref: (id: string) => string;
     mode: string; selectionHref: string; catalogHref: string; inventoryHref: string;
     listingPolicy: ListingPolicy; activeChoice: boolean; publishChoice: boolean;
+    fulfillmentModes?: FulfillmentModes;
     onRecoveryPreview?: () => void;
   }) {
   const revalidator = useRevalidator();
@@ -42,6 +45,8 @@ export default function ImportResults({ job, history, ids, markup, markups, list
   const changed = job?.status === "PREVIEW" && (
     pricingSignature(ids, markup, markups) !== pricingSignature(job.items.map((item) => item.supplierId), job.markup, job.markups) ||
     fieldsSignature(listingPolicy) !== fieldsSignature(job.listingPolicy) ||
+    fulfillmentSignature(ids, fulfillmentModes) !== fulfillmentSignature(job.items.map((item) => item.supplierId),
+      Object.fromEntries(job.items.filter((item) => item.fulfillmentMode === "DROPSHIPPING").map((item) => [item.supplierId, item.fulfillmentMode]))) ||
     activeChoice !== job.active || publishChoice !== Boolean(job.publicationId));
   const blocked = job?.items.some((item) => item.listing.action === "BLOCKED") ?? false;
   const replacements = job?.items.filter((item) => item.listing.action === "RECREATE").length ?? 0;
@@ -71,7 +76,7 @@ export default function ImportResults({ job, history, ids, markup, markups, list
       </s-banner>}
       {job.error && <div role="alert"><s-banner heading="Import needs attention" tone="critical">{job.error}</s-banner></div>}
       {job.status === "COMPLETE" && <s-banner heading="Import completed" tone="success">
-        Review each product below. Inventory sync remains opt-in. <Link to={inventoryHref}>Manage inventory</Link> or <Link to={catalogHref}>select more products</Link>.
+        Review each product below. Catalog-only stock is managed by you; supplier sync is available only for dropshipping products and remains opt-in. <Link to={inventoryHref}>Manage inventory</Link> or <Link to={catalogHref}>select more products</Link>.
       </s-banner>}
       {job.status === "PREVIEW" && replacements > 0 && <s-banner heading="Review replacements" tone="warning">
         {replacements} previously linked product{replacements === 1 ? " is" : "s are"} confirmed missing. Confirmation will create replacements with new product and variant IDs, using this snapshot&apos;s prices and new-product visibility. Previous retailer edits and collection membership are not restored.
@@ -83,6 +88,7 @@ export default function ImportResults({ job, history, ids, markup, markups, list
         <input type="hidden" name="job" value={job.id} />
         <div><label className="checkbox-label"><span><input name="confirm" type="checkbox" value={job.confirmation} required disabled={busy || expired || changed || blocked} /> I confirm these products, CAD prices, connections, and reviewed changes.
           {job.publicationId ? " Activate and publish new products to Online Store." : job.active ? " Activate new products without publication." : " Create any new products as unpublished drafts."}
+          {" "}Apply the reviewed fulfillment modes; do not enable order forwarding.
           {" "}{job.listingPolicy.mode === "UPDATE" ? "Apply only the selected updates to existing listings; preserve their publication and inventory." : "Keep existing product content and prices unchanged."}</span></label>
           <small>Applies to all {job.items.length} products in this snapshot, not just the visible page or search results.</small>
           {replacements > 0 && <small>This confirmation also authorizes the {replacements} reviewed replacement{replacements === 1 ? "" : "s"}.</small>}
@@ -111,7 +117,9 @@ export default function ImportResults({ job, history, ids, markup, markups, list
           <caption>Exact variant prices in CAD. This snapshot cannot be edited.</caption>
           <thead><tr><th scope="col">Product</th><th scope="col">Markup</th><th scope="col">Wholesale</th><th scope="col">Retail</th><th scope="col">Result / review</th></tr></thead>
           <tbody>{visible.map((item) => <tr key={item.supplierId}>
-            <td><strong>{supplierText(item.name)}</strong><small>{item.sku || "Review variant SKUs"} · {item.variantCount} variant(s)</small></td>
+            <td><strong>{supplierText(item.name)}</strong><small>{item.sku || "Review variant SKUs"} · {item.variantCount} variant(s)</small>
+              <small>{fulfillmentLabel(item.fulfillmentMode)}</small>
+              {item.fulfillmentMode === "CATALOG" && <small>No supplier quantities imported; supplier sync unavailable.</small>}</td>
             <td>{item.markup}%{job.markups[item.supplierId] !== undefined && <small>Product override</small>}</td>
             <td>{item.wholesale}</td><td><strong>{item.retail}</strong>{item.productId && (job.listingPolicy.mode === "KEEP" || !job.listingPolicy.prices) && ["KEEP", "LINK", "UPDATE"].includes(item.listing.action) && <small>Not applied to existing listing</small>}</td>
             <td><span className="status-badge">{job.status === "PREVIEW" ? ({

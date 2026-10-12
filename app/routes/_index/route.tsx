@@ -23,9 +23,9 @@ export default function App() {
   return (
     <div className={styles.index}>
       <div className={styles.content}>
-        <h1 className={styles.heading}>UltraLove Dropshipping Lab</h1>
+        <h1 className={styles.heading}>UltraLove Catalog</h1>
         <p className={styles.text}>
-          Development foundation for the retailer catalog interface. Test store only.
+          Import UltraLove products, manage your own stock, or choose supplier-backed dropshipping inventory. Test store only.
         </p>
         {showForm && (
           <Form className={styles.form} method="post" action="/auth/login">
@@ -38,7 +38,7 @@ export default function App() {
             </button>
           </Form>
         )}
-        <p>No product imports or order forwarding are available in this interface yet.</p>
+        <p>Imports require review and confirmation. Order forwarding is not enabled.</p>
       </div>
     </div>
   );

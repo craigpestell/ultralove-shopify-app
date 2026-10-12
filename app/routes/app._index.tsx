@@ -12,6 +12,7 @@ import type { MarkupOverrides } from "../pricing-policy";
 import CatalogWorkspace from "../catalog-workspace";
 import { ListingPolicyError, defaultListingPolicy } from "../listing-policy";
 import { listingInput } from "../workspace-policy";
+import { FulfillmentError, fulfillmentModes } from "../fulfillment-policy";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticateLabAdmin(request);
@@ -77,6 +78,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     let ids: number[];
     try { ids = selectionIds(JSON.parse(field("ids", Infinity))); } catch { throw new ImportError("Select distinct positive supplier product IDs."); }
     const hasPricing = intent !== "save-selection";
+    let modes;
+    if (form.has("fulfillment-modes")) {
+      let value: unknown;
+      try { value = JSON.parse(field("fulfillment-modes", Infinity)); }
+      catch { throw new FulfillmentError("Invalid product fulfillment choices."); }
+      modes = fulfillmentModes(value, ids);
+    } else {
+      modes = {};
+    }
     const markup = hasPricing ? markupPercent(field("markup")) : undefined;
     let markups: MarkupOverrides | undefined;
     if (hasPricing) {
@@ -98,11 +108,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const job = await createPreview(session.shop, markup!, async (query, variables) => {
         const response = await admin.graphql(query, { variables, tries: 1 });
         return response.json();
-      }, importChoices(form), { ids, markups: markups! }, policy);
+      }, importChoices(form), { ids, markups: markups!, fulfillmentModes: modes }, policy);
       return redirect(destination(job.id));
     }
     await validateSelection(ids);
-    const pricing = hasPricing ? { markup, markups: JSON.stringify(markups) } : { markups: "{}" };
+    const pricing = hasPricing ? { markup, markups: JSON.stringify(markups), fulfillmentModes: JSON.stringify(modes) }
+      : { markups: "{}", fulfillmentModes: JSON.stringify(modes) };
     await db.catalogSelection.upsert({
       where: { shop: session.shop },
       create: { shop: session.shop, productIds: JSON.stringify(ids), ...pricing },
@@ -110,7 +121,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
     return data({ error: null, saved: true });
   } catch (error) {
-    if (!(error instanceof ImportError) && !(error instanceof CatalogError) && !(error instanceof PricingError) && !(error instanceof ListingPolicyError)) throw error;
+    if (!(error instanceof ImportError) && !(error instanceof CatalogError) && !(error instanceof PricingError) && !(error instanceof ListingPolicyError) && !(error instanceof FulfillmentError)) throw error;
     console.warn("Catalog/import request rejected.", error.message);
     return data({ error: error.message, saved: false }, { status: error instanceof CatalogError ? 502 : 400 });
   }

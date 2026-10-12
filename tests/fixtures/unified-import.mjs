@@ -5,12 +5,12 @@ const state = `
 import { retailPrice } from "/app/pricing-policy.ts";
 import { defaultListingPolicy } from "/app/listing-policy.ts";
 export const shop = "ultralove-integration-lab.myshopify.com";
-export let saved = {selected:${JSON.stringify(process.env.UX_FIXTURE_LARGE_SELECTION ? Array.from({length: 300}, (_, index) => (index + 1) * 100) : [100])}, markup:"25.00", markups:{}};
+export let saved = {selected:${JSON.stringify(process.env.UX_FIXTURE_LARGE_SELECTION ? Array.from({length: 300}, (_, index) => (index + 1) * 100) : [100])}, markup:"25.00", markups:{},fulfillmentModes:{}};
 export const detailsControl = {fail:false,calls:[]};
 export const jobs = [];
-export function save(input) { saved = {...saved, selected:JSON.parse(input.productIds), markup:input.markup, markups:JSON.parse(input.markups)}; }
+export function save(input) { saved = {...saved, selected:JSON.parse(input.productIds), markup:input.markup, markups:JSON.parse(input.markups),fulfillmentModes:JSON.parse(input.fulfillmentModes||"{}")}; }
 export const products = Array.from({length:${process.env.UX_FIXTURE_LARGE_SELECTION ? 300 : 55}},(_,index)=>(index+1)*100).map(id=>({id,name:({"100":"Amber travel case","200":"Rose wellness kit","300":"Satin gift set"})[id]||"Fixture product "+id,type:id===300?"variable":"simple",sku:"SKU-"+id,price:"12.50",currency:"CAD",images:[],manage_stock:true,stock_owner_id:id,stock_quantity:10}));
-export const inventory = ${process.env.UX_FIXTURE_LARGE_SELECTION ? "products.map(p=>p.id)" : "[100,200]"}.map(supplierId=>({supplierId,name:products.find(p=>p.id===supplierId).name,sku:"SKU-"+supplierId,productId:"gid://shopify/Product/"+supplierId,enabled:supplierId===100,status:supplierId===100?"SYNCED":supplierId===300?"REVIEW":"NOT_ENROLLED",variantCount:1,error:supplierId===300?"The linked Shopify product could not be found.":null,lastSuccessAt:supplierId===100?new Date().toISOString():null,nextRunAt:null}));
+export const inventory = ${process.env.UX_FIXTURE_LARGE_SELECTION ? "products.map(p=>p.id)" : "[100,200]"}.map(supplierId=>({supplierId,fulfillmentMode:supplierId===200?"CATALOG":"DROPSHIPPING",name:products.find(p=>p.id===supplierId).name,sku:"SKU-"+supplierId,productId:"gid://shopify/Product/"+supplierId,enabled:supplierId===100,status:supplierId===100?"SYNCED":supplierId===300?"REVIEW":"NOT_ENROLLED",variantCount:1,error:supplierId===300?"The linked Shopify product could not be found.":null,lastSuccessAt:supplierId===100?new Date().toISOString():null,nextRunAt:null}));
 export const inventoryActions = [];
 export function screen(id) {
   const job = jobs.find(job=>job.id===id)||null;
@@ -19,7 +19,8 @@ export function screen(id) {
 export function preview(markup, choices, configuration, policy = defaultListingPolicy()) {
   const ids = configuration?.ids||saved.selected;
   const markups = configuration?.markups||{};
-  saved = {selected:ids,markup,markups};
+  const fulfillmentModes=configuration?.fulfillmentModes||{};
+  saved = {selected:ids,markup,markups,fulfillmentModes};
   const id = String(jobs.length+1).padStart(32,"a");
   jobs.unshift({id,status:"PREVIEW",markup,markups,listingPolicy:policy,createdAt:new Date().toISOString(),active:choices.active,publicationId:choices.publish?"gid://shopify/Publication/10":null,
     confirmation:choices.publish?"publish-online-store":choices.active?"active-unpublished":"draft-only",generation:"offline",cursor:1,error:null,
@@ -32,7 +33,7 @@ export function preview(markup, choices, configuration, policy = defaultListingP
         if(policy.prices)changes.push({field:"Retail price",before:"19.99 CAD",after:retailPrice("12.50",markups[supplierId]??markup)+" CAD"});
         if(policy.images)changes.push({field:"Supplier images",before:"1 existing image retained",after:"Add 1 supplier image"});
       }
-      return {supplierId,name:products.find(p=>p.id===supplierId)?.name||"Fixture product "+supplierId,sku:"SKU-"+supplierId,status:"PREVIEW",markup:markups[supplierId]??markup,
+      return {supplierId,fulfillmentMode:fulfillmentModes[supplierId]||"CATALOG",name:products.find(p=>p.id===supplierId)?.name||"Fixture product "+supplierId,sku:"SKU-"+supplierId,status:"PREVIEW",markup:markups[supplierId]??markup,
       productId:targetId,error:null,attempts:0,wholesale:"12.50 CAD",retail:retailPrice("12.50",markups[supplierId]??markup)+" CAD",variantCount:1,warnings:[],
       listing:{action,targetId,changes,message:action==="BLOCKED"?"The previously linked Shopify product still exists, but its UltraLove connection changed. Reconnect it instead of creating a replacement.":action==="RECREATE"?"The previously linked product is confirmed missing. Confirming this review will create a replacement using the reviewed prices and visibility settings.":null}};
     })});
@@ -92,6 +93,7 @@ const server = await createServer({
           const result={total:inventory.length,enabled:0,alreadyEnabled:0,blocked:[],error:null};
           inventoryActions.push({intent:"enable-all",ids:inventory.map(p=>p.supplierId)});
           for(const product of inventory) {
+            if(product.fulfillmentMode==="CATALOG"){result.blocked.push({...product,error:"Catalog only: your own stock is never eligible for supplier sync."});continue;}
             if(product.enabled){result.alreadyEnabled++;continue;}
             if(product.error){result.blocked.push({...product,error:product.error});continue;}
             product.enabled=true;product.status="QUEUED";result.enabled++;

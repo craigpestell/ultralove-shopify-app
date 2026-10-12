@@ -89,7 +89,7 @@ systemctl restart ultralove-shopify-imports
 systemctl is-active ultralove-shopify
 ready=false
 for attempt in {1..30}; do
-    if curl --fail --silent http://127.0.0.1:3097/ | grep 'UltraLove Dropshipping Lab' >/dev/null; then
+    if curl --fail --silent http://127.0.0.1:3097/ | grep 'UltraLove Catalog' >/dev/null; then
         ready=true
         break
     fi
@@ -108,5 +108,5 @@ fi
 nginx -t
 systemctl is-active nginx ultralove-shopify ultralove-shopify-imports
 curl --fail --silent --show-error https://shopify-lab.104-248-211-144.sslip.io/ |
-    grep 'UltraLove Dropshipping Lab' >/dev/null
+    grep 'UltraLove Catalog' >/dev/null
 echo "Lab app release $release is serving over HTTPS."

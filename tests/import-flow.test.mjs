@@ -41,7 +41,7 @@ test("published jobs persist opt-in settings and recover an uncertain publicatio
                   metafields:[{namespace:"ultralove_catalog",key:"supplier_id",value:String(id)}],
                   variants:(id===200?["12.50","0.01",null]:["12.50"]).map((price,index)=>({
                     sku:"SKU-"+id+(index?"-"+index:""),price:retailPrice(price,markup),inventoryPolicy:"DENY",inventoryItem:{tracked:true},
-                    inventoryQuantities:[{locationId:location,name:"available",quantity:0}],
+                    inventoryQuantities:[{locationId:location,name:"available",quantity:id===200?42:0}],
                     metafields:[{namespace:"ultralove_catalog",key:"supplier_id",value:String(id+index)}]}))
                 }
               })) };
@@ -51,7 +51,7 @@ test("published jobs persist opt-in settings and recover an uncertain publicatio
   });
   const { default: db } = await server.ssrLoadModule("/app/db.server.ts");
   try {
-    for (const migration of ["20261009120000_catalog_selection", "20261009130000_import_jobs", "20261009190000_import_visibility", "20261009200000_inventory_sync", "20261009203000_product_markups", "20261009220000_listing_policy"]) {
+    for (const migration of ["20261009120000_catalog_selection", "20261009130000_import_jobs", "20261009190000_import_visibility", "20261009200000_inventory_sync", "20261009203000_product_markups", "20261009220000_listing_policy", "20261012030000_fulfillment_modes"]) {
       const sql = await readFile(new URL(`../prisma/migrations/${migration}/migration.sql`, import.meta.url), "utf8");
       for (const statement of sql.split(";").filter((part) => part.trim())) await db.$executeRawUnsafe(statement);
     }
@@ -111,7 +111,7 @@ test("published jobs persist opt-in settings and recover an uncertain publicatio
       throw new Error("Simulated connection loss after successful publication");
     };
 
-    await db.catalogSelection.create({ data: { shop, productIds: "[100]" } });
+    await db.catalogSelection.create({ data: { shop, productIds: "[100]", fulfillmentModes: '{"100":"DROPSHIPPING"}' } });
     const preview = await createPreview(shop, "25", api, { active: true, publish: true });
     assert.equal(preview.active, true);
     assert.equal(preview.publicationId, publicationId);
@@ -173,22 +173,28 @@ test("published jobs persist opt-in settings and recover an uncertain publicatio
       assert.equal(query, VERIFY_QUERY, "draft-only imports cannot activate or publish");
       return { data: { product: imported.get(variables.id) } };
     };
-    const overrides = await createPreview(shop, "25", overrideApi, undefined, { ids: [200, 300], markups: { 200: "50" } });
+    const overrides = await createPreview(shop, "25", overrideApi, undefined, {
+      ids: [200, 300], markups: { 200: "50" }, fulfillmentModes: { 300: "DROPSHIPPING" },
+    });
     assert.equal(overrides.markup, "25.00");
     assert.equal(overrides.markups, '{"200":"50.00"}');
-    assert.deepEqual(await savedConfiguration(shop), { selected: [200, 300], markup: "25.00", markups: { 200: "50.00" } });
+    assert.deepEqual(await savedConfiguration(shop), { selected: [200, 300], markup: "25.00", markups: { 200: "50.00" }, fulfillmentModes: { 300: "DROPSHIPPING" } });
     const snapshot = await db.importJob.findUniqueOrThrow({ where: { id: overrides.id }, include: { items: true } });
     assert.deepEqual(JSON.parse(snapshot.items.find((item) => item.supplierId === 200).payload).variants.map((variant) => variant.price),
       ["18.75", "0.02", "0.00"], "each variant receives the parent's override with exact rounding");
     assert.equal(JSON.parse(snapshot.items.find((item) => item.supplierId === 300).payload).variants[0].price, "15.63");
     assert.equal((await importScreen(shop, overrides.id)).job.items[0].markup, "50.00");
     await db.catalogSelection.update({ where: { shop }, data: { markup: "75.00", markups: "{}" } });
-    await queueJob(shop, overrides.id, false);
+    await queueJob(shop, overrides.id, false, (await importScreen(shop, overrides.id)).job.confirmation);
     await runJob(overrides.id, shop, overrideApi, () => false);
     assert.equal((await importScreen(shop, overrides.id)).job.status, "COMPLETE");
     assert.deepEqual(inputs[0].variants.map((variant) => variant.price), ["18.75", "0.02", "0.00"],
       "worker uses persisted snapshot, not later defaults or overrides");
     assert.equal(inputs[1].variants[0].price, "15.63");
+    assert.ok(inputs[0].variants.every((variant) => !("inventoryQuantities" in variant)), "catalog-only mutations omit every supplier quantity");
+    assert.equal(inputs[1].variants[0].inventoryQuantities[0].quantity, 0, "dropshipping quantities remain unchanged");
+    assert.equal((await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId: 200 } } })).fulfillmentMode, "CATALOG");
+    assert.equal((await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId: 300 } } })).fulfillmentMode, "DROPSHIPPING");
     assert.deepEqual((await db.importJob.findUniqueOrThrow({ where: { id: overrides.id }, include: { items: true } })).items
       .map((item) => item.payload), snapshot.items.map((item) => item.payload));
 
@@ -233,7 +239,7 @@ test("published jobs persist opt-in settings and recover an uncertain publicatio
     assert.equal(Object.keys(largeScreen.job.markups).length, 125);
     assert.ok(largeScreen.job.items.every((item) => item.markup === "50.00" && item.retail === "18.75 CAD"));
     const inputsBefore = inputs.length;
-    await queueJob(shop, large.id, false);
+    await queueJob(shop, large.id, false, largeScreen.job.confirmation);
     await runJob(large.id, shop, overrideApi, () => false);
     assert.equal((await importScreen(shop, large.id)).job.status, "COMPLETE");
     assert.equal(inputs.length - inputsBefore, 125, "worker processes every parent in a larger-than-page import");

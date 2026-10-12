@@ -3,9 +3,10 @@ import { Form, Link, useActionData, useFetcher, useLoaderData, useLocation, useN
 import type { action, loader } from "./routes/app._index";
 import type { loader as detailsLoader } from "./routes/app.selection-details";
 import { CATALOG_BATCH_SIZE, pageSelection, supplierText } from "./catalog-policy";
-import { pricingSignature, retailPrice, selectedOverrides } from "./pricing-policy";
+import { retailPrice, selectedOverrides } from "./pricing-policy";
 import { useWorkspace, WorkspaceNav } from "./workspace";
-import { selectedPage, validListingChoices, validPricing, workspaceHref } from "./workspace-policy";
+import { selectedPage, signature, validListingChoices, validPricing, workspaceHref } from "./workspace-policy";
+import { fulfillmentLabel, fulfillmentMode, modeFor } from "./fulfillment-policy";
 import ProductImage from "./product-image";
 import ImportOptions from "./import-options";
 import ImportResults from "./import-results";
@@ -20,7 +21,7 @@ function stockLabel(product: { type: string; manage_stock: boolean; stock_quanti
 }
 
 export default function CatalogWorkspace() {
-  const { selected, markup: savedMarkup, markups: savedMarkups, filters, products, categories, error, job, history } = useLoaderData<typeof loader>();
+  const { selected, markup: savedMarkup, markups: savedMarkups, fulfillmentModes: savedModes, filters, products, categories, error, job, history } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -29,8 +30,9 @@ export default function CatalogWorkspace() {
   const { draft, setDraft, storageAvailable } = useWorkspace();
   const { selected: ids, markup, markups } = draft;
   const busy = navigation.state !== "idle";
-  const baseline = pricingSignature(selected, savedMarkup, savedMarkups);
-  const dirty = pricingSignature(ids, markup, markups) !== baseline;
+  const modes = draft.fulfillmentModes ?? {};
+  const baseline = signature({ selected, markup: savedMarkup, markups: savedMarkups, fulfillmentModes: savedModes });
+  const dirty = signature(draft) !== baseline;
   const params = new URLSearchParams(location.search);
   const requestedView = params.get("view") || (job ? "review" : "catalog");
   const view = ["catalog", "selection", "review", "imports"].includes(requestedView) ? requestedView : "catalog";
@@ -105,6 +107,7 @@ export default function CatalogWorkspace() {
   const offPage = ids.filter((id) => !pageIds.includes(id));
   const select = (nextIds: number[]) => setDraft((current) => ({
     ...current, selected: nextIds, markups: selectedOverrides(current.markups, nextIds),
+    fulfillmentModes: Object.fromEntries(Object.entries(current.fulfillmentModes ?? {}).filter(([id]) => nextIds.includes(Number(id)))),
     selectionPage: selectedPage(nextIds, current.products, current.selectionSearch, current.selectionPage).page,
     listingPolicy: { ...current.listingPolicy,
       links: Object.fromEntries(Object.entries(current.listingPolicy.links).filter(([id]) => nextIds.includes(Number(id)))),
@@ -134,7 +137,7 @@ export default function CatalogWorkspace() {
     form.set("intent", "save-configuration");
     submit(form, { method: "post" });
   };
-  return <s-page heading="UltraLove" inlineSize="large">
+  return <s-page heading="UltraLove Catalog" inlineSize="large">
     <div className="catalog-browser workspace">
       <WorkspaceNav current={view} />
       <header className="workspace-header">
@@ -153,6 +156,7 @@ export default function CatalogWorkspace() {
         <input type="hidden" name="ids" value={JSON.stringify(ids)} />
         <input type="hidden" name="markups" value={JSON.stringify(selectedOverrides(markups, ids))} />
         <input type="hidden" name="markup" value={markup} />
+        <input type="hidden" name="fulfillment-modes" value={JSON.stringify(modes)} />
         <input type="hidden" name="listing-policy" value={JSON.stringify(draft.listingPolicy)} />
         {draft.active && <input type="hidden" name="active" value="yes" />}
         {draft.publish && <input type="hidden" name="publish" value="yes" />}
@@ -233,6 +237,18 @@ export default function CatalogWorkspace() {
                 <div className="selection-price"><small>Est. retail · CAD</small><strong>{estimate(product?.price ?? null, id, product?.type ?? "")}</strong></div>
                 {overrideField(id, name)}
                 <button type="button" className="quiet-button" disabled={busy} aria-label={`Remove ${name}`} onClick={() => select(ids.filter((selectedId) => selectedId !== id))}>Remove</button>
+                <label className="selection-fulfillment">Fulfillment<select aria-label={`Fulfillment for ${name}`} disabled={busy} value={modeFor(modes, id)}
+                  onChange={(event) => {
+                    const mode = fulfillmentMode(event.currentTarget.value);
+                    setDraft((current) => {
+                      const next = { ...current.fulfillmentModes };
+                      if (mode === "CATALOG") delete next[id]; else next[id] = mode;
+                      return { ...current, fulfillmentModes: next };
+                    });
+                  }}>
+                  <option value="CATALOG">{fulfillmentLabel("CATALOG")}</option>
+                  <option value="DROPSHIPPING">{fulfillmentLabel("DROPSHIPPING")}</option>
+                </select></label>
               </li>;
             })}</ul>
             <nav className="catalog-pagination" aria-label="Selected products pagination">
@@ -243,6 +259,23 @@ export default function CatalogWorkspace() {
           <Link to={viewHref("catalog")}>Add more products</Link>
         </section>
         <aside className="workspace-panel pricing-panel" aria-labelledby="pricing-heading">
+          <fieldset className="catalog-import-options"><legend>How will you fulfill these products?</legend>
+            <label>Apply to all {ids.length} selected products
+              <select disabled={busy || !ids.length}
+                value={ids.every((id) => modeFor(modes, id) === "CATALOG") ? "CATALOG" : ids.every((id) => modeFor(modes, id) === "DROPSHIPPING") ? "DROPSHIPPING" : "MIXED"}
+                onChange={(event) => {
+                  const mode = fulfillmentMode(event.currentTarget.value);
+                  setDraft((current) => ({ ...current, fulfillmentModes: mode === "CATALOG" ? {}
+                    : Object.fromEntries(current.selected.map((id) => [id, mode])) }));
+                }}>
+                <option value="CATALOG">{fulfillmentLabel("CATALOG")}</option>
+                <option value="DROPSHIPPING">{fulfillmentLabel("DROPSHIPPING")}</option>
+                <option value="MIXED" disabled>Mixed — use each product&apos;s choice</option>
+              </select>
+            </label>
+            <p>Catalog only imports content, not UltraLove quantities. Inventory tracking stays on with no sellable supplier stock; set your own stock in Shopify before publishing.</p>
+            <p>Dropshipping imports supplier availability. Inventory sync requires separate opt-in after import. Neither choice approves or enables order forwarding; UltraLove approval and explicit activation remain separate.</p>
+          </fieldset>
           <h2 id="pricing-heading">Pricing defaults</h2>
           <label>Default retail markup (%)
             <input type="number" min="0" max="1000" step="0.01" inputMode="decimal" required autoComplete="off"
@@ -266,16 +299,19 @@ export default function CatalogWorkspace() {
         <div role="status" aria-live="polite"><strong>{ids.length} selected</strong><small>{dirty ? "Unsaved to store" : "Saved to store"}{storageAvailable ? " · Draft kept in this tab" : ""}{view === "catalog" && offPage.length ? ` · ${offPage.length} outside this page` : ""}</small></div>
         <div className="catalog-actions">
           <s-button disabled={busy || !dirty} onClick={save} loading={busy && navigation.formData?.get("intent") === "save-configuration"}>Save changes</s-button>
-          <details className="selection-reset"><summary>Reset</summary><s-button disabled={busy || !dirty} onClick={() => setDraft((current) => ({ ...current, selected, markup: savedMarkup, markups: savedMarkups }))}>Restore saved selection and markup</s-button></details>
+          <details className="selection-reset"><summary>Reset</summary><s-button disabled={busy || !dirty} onClick={() => setDraft((current) => ({ ...current, selected, markup: savedMarkup, markups: savedMarkups, fulfillmentModes: savedModes }))}>Restore saved selection and markup</s-button></details>
           {view === "catalog" ? <Link className="workspace-primary" to={viewHref("selection")}>Review selection{ids.length ? ` (${ids.length})` : ""}</Link> :
             <s-button variant="primary" disabled={busy || !ids.length || !validPricing(draft) || !validListingChoices(draft)} loading={busy && navigation.formData?.get("intent") === "preview"}
               onClick={() => { if (configurationForm.current) submit(new FormData(configurationForm.current), { method: "post" }); }}>Create pricing preview</s-button>}
         </div>
       </div>}
       {(view === "review" || view === "imports") && <ImportResults job={job} history={history} ids={ids} markup={markup} markups={markups} busy={busy}
+        fulfillmentModes={modes}
         listingPolicy={draft.listingPolicy} activeChoice={draft.active} publishChoice={draft.publish} mode={view} jobHref={(id) => viewHref("imports", id)} selectionHref={viewHref("selection")} catalogHref={viewHref("catalog")}
         onRecoveryPreview={() => { if (job) setDraft((current) => ({ ...current, selected: job.items.map((item) => item.supplierId),
-          markup: job.markup, markups: job.markups, listingPolicy: job.listingPolicy, active: job.active, publish: Boolean(job.publicationId) })); }}
+          markup: job.markup, markups: job.markups,
+          fulfillmentModes: Object.fromEntries(job.items.filter((item) => item.fulfillmentMode === "DROPSHIPPING").map((item) => [item.supplierId, item.fulfillmentMode])),
+          listingPolicy: job.listingPolicy, active: job.active, publish: Boolean(job.publicationId) })); }}
         inventoryHref={viewHref("inventory")} />}
     </div>
   </s-page>;

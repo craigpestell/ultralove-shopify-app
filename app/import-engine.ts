@@ -1,4 +1,5 @@
 import { markupPercent as normalizeMarkup, PricingError } from "./pricing-policy.ts";
+import type { FulfillmentMode } from "./fulfillment-policy.ts";
 
 export class ImportError extends Error {}
 export type GraphQL = (query: string, variables: Record<string, unknown>) => Promise<unknown>;
@@ -6,7 +7,7 @@ type Metadata = { namespace: string; key: string; value: string };
 type Variant = {
   sku: string; price: string; barcode?: string; inventoryPolicy: string;
   inventoryItem: { tracked: boolean };
-  inventoryQuantities: { locationId: string; name: string; quantity: number }[];
+  inventoryQuantities?: { locationId: string; name: string; quantity: number }[];
   metafields: Metadata[];
 };
 export type Payload = Record<string, unknown> & {
@@ -93,7 +94,7 @@ export function priceRange(prices: (string | null)[]): string {
   return `${valid[0]}${valid.length > 1 ? ` - ${valid.at(-1)}` : ""} CAD${valid.length !== prices.length && prices.some((price) => !price) ? " (some missing)" : ""}`;
 }
 
-export function payload(value: unknown, supplierId: number, runId: string, location: string): Payload {
+export function payload(value: unknown, supplierId: number, runId: string, location: string, mode: FulfillmentMode = "DROPSHIPPING"): Payload {
   const input = object(value);
   const allowed = ["title", "descriptionHtml", "handle", "status", "vendor", "tags", "productOptions", "variants", "metafields", "files"];
   if (Object.keys(input).some((key) => !allowed.includes(key)) || input.status !== "DRAFT" ||
@@ -108,7 +109,8 @@ export function payload(value: unknown, supplierId: number, runId: string, locat
   const variants = list(input.variants).map((entry): Variant => {
     const variant = object(entry);
     const inventory = object(variant.inventoryItem);
-    const quantities = list(variant.inventoryQuantities).map((entry) => {
+    if (mode === "CATALOG" && variant.inventoryQuantities !== undefined) throw new ImportError("Catalog-only imports must not contain supplier inventory quantities.");
+    const quantities = mode === "CATALOG" ? [] : list(variant.inventoryQuantities).map((entry) => {
       const quantity = object(entry);
       if (quantity.locationId !== location || quantity.name !== "available" ||
           !Number.isInteger(quantity.quantity) || Number(quantity.quantity) < 0 || Number(quantity.quantity) > 2147483647) {
@@ -119,13 +121,22 @@ export function payload(value: unknown, supplierId: number, runId: string, locat
     const price = text(variant.price);
     cadCents(price);
     if ("id" in variant || "id" in inventory || inventory.tracked !== true ||
-        variant.inventoryPolicy !== "DENY" || quantities.length !== 1 ||
+        variant.inventoryPolicy !== "DENY" || (mode === "DROPSHIPPING" && quantities.length !== 1) ||
         (variant.barcode !== undefined && typeof variant.barcode !== "string")) throw new ImportError("Unsafe import variant.");
     return { ...variant, sku: text(variant.sku), price, inventoryPolicy: "DENY",
-      inventoryItem: { ...inventory, tracked: true }, inventoryQuantities: quantities, metafields: metadata(variant.metafields) };
+      inventoryItem: { ...inventory, tracked: true }, ...(mode === "DROPSHIPPING" ? { inventoryQuantities: quantities } : {}),
+      metafields: metadata(variant.metafields) };
   });
   if (!variants.length || variants.length > 2048) throw new ImportError("Import requires 1-2048 variants per parent.");
   return { ...input, title: text(input.title), handle: text(input.handle), status: "DRAFT", tags, variants, metafields: fields };
+}
+
+export function catalogOnlyPayload(input: Payload): Payload {
+  return { ...input, variants: input.variants.map((variant) => {
+    const copy = { ...variant };
+    delete copy.inventoryQuantities;
+    return copy;
+  }) };
 }
 
 export function plannedFeed(value: unknown, ids: number[], runId: string, location: string) {
@@ -225,7 +236,7 @@ export async function onlineStorePublication(api: GraphQL): Promise<string> {
   return id;
 }
 
-async function finishNewProduct(api: GraphQL, input: Payload, product: RemoteProduct, settings: ImportSettings) {
+async function finishNewProduct(api: GraphQL, input: Payload, product: RemoteProduct, settings: ImportSettings, location?: string) {
   if (!settings.active) return;
   if (product.status !== "DRAFT" && product.status !== "ACTIVE") {
     throw new ImportError("Imported product status changed unexpectedly. Manual review is required.");
@@ -265,7 +276,7 @@ async function finishNewProduct(api: GraphQL, input: Payload, product: RemotePro
       waitedForImages = true;
       await new Promise<void>((resolve) => setTimeout(resolve, IMAGE_READY_INTERVAL_MS));
     }
-    if (waitedForImages) await verifyDraft(api, input, product.id, product.status === "ACTIVE" ? "ACTIVE" : "DRAFT");
+    if (waitedForImages) await verifyDraft(api, input, product.id, product.status === "ACTIVE" ? "ACTIVE" : "DRAFT", location);
   }
   if (product.status === "DRAFT") {
     const result = object((await request(api, ACTIVATE_MUTATION, { product: { id: product.id, status: "ACTIVE" } })).productUpdate);
@@ -345,7 +356,7 @@ export function matchProduct(products: RemoteProduct[], supplierId: number): Rem
   if (matches.size > 1) throw new ImportError(`Duplicate Shopify supplier identities for ${supplierId}.`);
   return [...matches.values()][0] || null;
 }
-export async function verifyDraft(api: GraphQL, input: Payload, productId: string, expectedStatus: "DRAFT" | "ACTIVE" = "DRAFT") {
+export async function verifyDraft(api: GraphQL, input: Payload, productId: string, expectedStatus: "DRAFT" | "ACTIVE" = "DRAFT", location?: string) {
   const wanted = new Map(input.variants.map((variant) => {
     const supplier = variant.metafields.find((field) => field.namespace === "ultralove_catalog" && field.key === "supplier_id");
     if (!supplier || !/^[1-9]\d*$/.test(supplier.value)) throw new ImportError("Missing supplier variant identity.");
@@ -356,8 +367,10 @@ export async function verifyDraft(api: GraphQL, input: Payload, productId: strin
   const cursors = new Set<string>();
   let after: string | null = null;
   let complete = false;
+  const inventoryLocation = input.variants[0].inventoryQuantities?.[0]?.locationId ?? location;
+  if (!inventoryLocation) throw new ImportError("The reviewed inventory location is required for draft verification.");
   for (let pageNumber = 0; pageNumber < 21; pageNumber++) {
-    const product = object((await request(api, VERIFY_QUERY, { id: productId, after, location: input.variants[0].inventoryQuantities[0].locationId })).product);
+    const product = object((await request(api, VERIFY_QUERY, { id: productId, after, location: inventoryLocation })).product);
     if (product.status !== expectedStatus) throw new ImportError("The imported product has an unexpected status; manual review required.");
     const variants = object(product.variants);
     for (const entry of list(variants.nodes)) {
@@ -365,10 +378,14 @@ export async function verifyDraft(api: GraphQL, input: Payload, productId: strin
       const id = text(object(variant.supplierId).value);
       const expected = wanted.get(id);
       const inventory = object(variant.inventoryItem);
-      const quantities = list(object(inventory.inventoryLevel).quantities).map(object);
+      const quantities = inventory.inventoryLevel === null ? [] : list(object(inventory.inventoryLevel).quantities).map(object);
+      const expectedQuantity = expected?.inventoryQuantities?.[0]?.quantity;
+      const validInventory = expectedQuantity === undefined
+        ? quantities.length === 0 || (quantities.length === 1 && quantities[0].name === "available" && quantities[0].quantity === 0)
+        : quantities.length === 1 && quantities[0].name === "available" && quantities[0].quantity === expectedQuantity;
       if (!expected || seen.has(id) || (variant.sku === null ? "" : text(variant.sku)) !== expected.sku || cadCents(text(variant.price)) !== cadCents(expected.price) ||
           (variant.barcode || null) !== (expected.barcode || null) || variant.inventoryPolicy !== "DENY" || inventory.tracked !== true ||
-          quantities.length !== 1 || quantities[0].name !== "available" || quantities[0].quantity !== expected.inventoryQuantities[0].quantity) {
+          !validInventory) {
         throw new ImportError("Created draft failed variant, price, barcode or inventory verification. No repair was applied.");
       }
       seen.add(id);
@@ -390,6 +407,7 @@ export async function importDraft(options: {
   api: GraphQL; products: RemoteProduct[]; input: Payload; supplierId: number; runId: string;
   attempted: boolean; previouslyMapped: boolean; expectedProductId?: string | null; fresh: boolean; beforeMutation: () => Promise<void>;
   active?: boolean; publicationId?: string | null;
+  location?: string;
   onCreated?: (productId: string) => Promise<void>;
 }): Promise<{ status: "CREATED" | "REUSED"; productId: string }> {
   const { api, products, input, supplierId, runId } = options;
@@ -399,8 +417,8 @@ export async function importDraft(options: {
     if (options.expectedProductId && existing.id !== options.expectedProductId) throw new ImportError("The saved Shopify mapping was replaced. Manual review is required.");
     if (existing.tags.includes(`ultralove-catalog-run-${runId}`)) {
       await options.onCreated?.(existing.id);
-      await verifyDraft(api, input, existing.id, settings.active && existing.status === "ACTIVE" ? "ACTIVE" : "DRAFT");
-      await finishNewProduct(api, input, existing, settings);
+      await verifyDraft(api, input, existing.id, settings.active && existing.status === "ACTIVE" ? "ACTIVE" : "DRAFT", options.location);
+      await finishNewProduct(api, input, existing, settings, options.location);
       return { status: "CREATED", productId: existing.id };
     }
     return { status: "REUSED", productId: existing.id };
@@ -418,8 +436,8 @@ export async function importDraft(options: {
     throw new ImportError("Shopify creation returned an unexpected identity or publication status.");
   }
   await options.onCreated?.(created.id);
-  await verifyDraft(api, input, created.id);
-  await finishNewProduct(api, input, created, settings);
+  await verifyDraft(api, input, created.id, "DRAFT", options.location);
+  await finishNewProduct(api, input, created, settings, options.location);
   products.push({ ...created, status: settings.active ? "ACTIVE" : "DRAFT" });
   return { status: "CREATED", productId: created.id };
 }

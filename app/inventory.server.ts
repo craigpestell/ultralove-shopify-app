@@ -10,6 +10,7 @@ import {
   mappings, remoteInventory, remoteInventories, setStock, stockOperation, stockPlan, verifyMappings,
 } from "./inventory-engine";
 import type { InventoryFeed, InventoryRead, Mapping, RemoteInventory, StockOperation } from "./inventory-engine";
+import { fulfillmentMode } from "./fulfillment-policy";
 
 export async function inventoryScreen(shop: string) {
   assertLabShop(shop);
@@ -31,6 +32,7 @@ export async function inventoryScreen(shop: string) {
     const state = syncStates.get(claim.supplierId);
     return [{
       supplierId: claim.supplierId, productId: claim.productId, name: item.name, sku: item.sku,
+      fulfillmentMode: fulfillmentMode(claim.fulfillmentMode),
       enabled: state?.enabled || false, status: state?.status || "NOT_ENROLLED",
       error: state?.error || null, variantCount: state ? mappings(JSON.parse(state.mappings)).length : null,
       lastSuccessAt: state?.lastSuccessAt?.toISOString() || null,
@@ -42,6 +44,12 @@ export async function inventoryScreen(shop: string) {
 export async function inventoryControl(shop: string, supplierId: number, intent: string, api: GraphQL, confirmation?: string) {
   assertLabShop(shop);
   if (!Number.isInteger(supplierId) || supplierId < 1 || supplierId > 2147483647) throw new InventoryError("Invalid supplier inventory product.");
+  if (intent !== "pause") {
+    const claim = await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId } } });
+    if (claim && fulfillmentMode(claim.fulfillmentMode) === "CATALOG") {
+      throw new InventoryError("Catalog-only inventory is retailer-managed. Review a dropshipping-mode import before enabling supplier sync.");
+    }
+  }
   if (intent === "pause" || intent === "sync-now") {
     const updated = await db.inventorySync.updateMany({
       where: { shop, supplierId, ...(intent === "sync-now" ? { enabled: true, status: { not: "RUNNING" } } : {}) },
@@ -61,6 +69,7 @@ async function enableInventory(shop: string, supplierId: number, api: GraphQL,
   preflight?: { location: string; productId: string; current: RemoteInventory[] }) {
   const claim = await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId } } });
   if (!claim?.productId) throw new InventoryError("Import this product through the app before enabling inventory sync.");
+  if (fulfillmentMode(claim.fulfillmentMode) !== "DROPSHIPPING") throw new InventoryError("Catalog-only products cannot enroll in supplier inventory sync.");
   const productId = claim.productId;
   const imported = await db.importItem.findFirst({
     where: { supplierId, productId: claim.productId, status: { in: ["CREATED", "REUSED", "UPDATED", "LINKED"] }, job: { shop } },
@@ -95,7 +104,7 @@ async function enableInventory(shop: string, supplierId: number, api: GraphQL,
   if (expired) console.warn("Explicitly restarting inventory enrollment after an expired uncertain correction.", supplierId);
   await db.$transaction(async (transaction) => {
     const latestClaim = await transaction.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId } } });
-    if (latestClaim?.productId !== claim.productId) throw new InventoryError("The imported listing changed during enrollment. Refresh and review it.");
+    if (latestClaim?.productId !== claim.productId || latestClaim.fulfillmentMode !== "DROPSHIPPING") throw new InventoryError("The imported listing or fulfillment mode changed during enrollment. Refresh and review it.");
     if (existing) {
       const updated = await transaction.inventorySync.updateMany({
         where: { shop, supplierId, revision: existing.revision, status: { not: "RUNNING" },
@@ -119,7 +128,9 @@ export async function enableAllInventory(shop: string, api: GraphQL, confirmatio
     blocked: [] as { supplierId: number; name: string; sku: string; error: string }[] };
   const candidates: ((typeof products)[number] & { productId: string })[] = [];
   for (const product of products) {
-    if (product.enabled) {
+    if (product.fulfillmentMode === "CATALOG") {
+      result.blocked.push({ ...product, error: "Catalog only: your own stock is never eligible for supplier sync." });
+    } else if (product.enabled) {
       result.alreadyEnabled++;
     } else if (product.status === "RUNNING" || !product.productId) {
       result.blocked.push({ ...product, error: "A verified, non-running imported listing is required. Refresh its status." });
@@ -201,6 +212,13 @@ export async function runInventoryBatch(shop: string, supplierIds: number[], api
     shop, supplierId: item.saved.supplierId, enabled: true, revision: item.saved.revision, status: "RUNNING",
   });
   const claim = async (saved: InventorySync, due: boolean) => {
+    const owner = await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId: saved.supplierId } } });
+    if (!owner || owner.productId !== saved.productId || owner.fulfillmentMode !== "DROPSHIPPING") {
+      console.warn("Supplier inventory cycle blocked by fulfillment ownership.", saved.supplierId);
+      await db.inventorySync.updateMany({ where: { shop, supplierId: saved.supplierId, revision: saved.revision },
+        data: { enabled: false, status: "REVIEW", revision: { increment: 1 }, error: "Supplier sync is not authorized for this product's fulfillment mode or listing." } });
+      return;
+    }
     const nextRunAt = new Date(Date.now() + INVENTORY_INTERVAL);
     const claimed = saved.enabled && saved.status !== "RUNNING" && (await db.inventorySync.updateMany({
       where: { shop, supplierId: saved.supplierId, enabled: true, revision: saved.revision, status: { not: "RUNNING" },
@@ -217,7 +235,9 @@ export async function runInventoryBatch(shop: string, supplierIds: number[], api
   }
   if (!work.length) return;
   const allowed = async (item: InventoryWork) => item.claimed && !item.failed && !stopping() &&
-    Boolean(await db.inventorySync.findFirst({ where: guard(item), select: { supplierId: true } }));
+    Boolean(await db.inventorySync.findFirst({ where: guard(item), select: { supplierId: true } })) &&
+    Boolean(await db.importClaim.findFirst({ where: { shop, supplierId: item.saved.supplierId,
+      productId: item.saved.productId, fulfillmentMode: "DROPSHIPPING" }, select: { supplierId: true } }));
   const fail = async (item: InventoryWork, error: unknown, review = false, disable = false) => {
     item.failed = true;
     console.error("Inventory synchronization failed.", item.saved.supplierId, error instanceof Error ? error.message : "Unknown failure");

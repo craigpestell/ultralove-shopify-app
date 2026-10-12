@@ -8,6 +8,7 @@ import { InventoryError } from "../inventory-engine";
 import { supplierText } from "../catalog-policy";
 import { useWorkspace, WorkspaceNav } from "../workspace";
 import { statusLabel, workspaceHref } from "../workspace-policy";
+import { fulfillmentLabel } from "../fulfillment-policy";
 import "../catalog.css";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -61,6 +62,7 @@ export default function Inventory() {
     return () => clearInterval(timer);
   }, [active, revalidator]);
   const enabled = products.filter((product) => product.enabled).length;
+  const eligible = products.filter((product) => product.fulfillmentMode === "DROPSHIPPING");
   const needsReview = products.filter((product) => product.error || ["FAILED", "REVIEW"].includes(product.status)).length;
   const visible = products.filter((product) =>
     (!search || `${supplierText(product.name)} ${product.sku}`.toLowerCase().includes(search.toLowerCase())) &&
@@ -68,26 +70,26 @@ export default function Inventory() {
       (filter === "review" && (product.error || ["FAILED", "REVIEW"].includes(product.status)))));
   const catalogHref = workspaceHref(location.search, "catalog", draft.browse);
   const formatTime = (value: string | null) => value ? new Date(value).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" }) : "Not synchronized yet";
-  return <s-page heading="UltraLove" inlineSize="large">
+  return <s-page heading="UltraLove Catalog" inlineSize="large">
       <div className="catalog-browser workspace">
         <WorkspaceNav current="inventory" />
-        <header className="workspace-header"><div><h1>Inventory</h1><p>Keep supplier-backed stock current. Prices and storefront visibility are never changed.</p></div>
+        <header className="workspace-header"><div><h1>Inventory</h1><p>Manage your own stock for catalog-only products. Opt into supplier sync only for dropshipping products.</p></div>
           <Link to={catalogHref}>Add products from catalog</Link></header>
         <div className="inventory-overview" aria-label="Inventory overview">
           <button type="button" aria-pressed={filter === "all"} onClick={() => setFilter("all")}><strong>{products.length}</strong> Imported products</button>
           <button type="button" aria-pressed={filter === "enabled"} onClick={() => setFilter("enabled")}><strong>{enabled}</strong> Sync on</button>
           <button type="button" aria-pressed={filter === "review"} onClick={() => setFilter("review")}><strong>{needsReview}</strong> Need review</button>
         </div>
-        {products.length > 0 && <section className="workspace-panel" aria-label="Enable all imported inventory">
+        {eligible.length > 0 && <section className="workspace-panel" aria-label="Enable all imported inventory">
           <h2>Enable inventory sync for all</h2>
-          <p>Apply to all {products.length} currently imported products, regardless of the search or filter below.
+          <p>Apply to {eligible.length} dropshipping products, regardless of the search or filter below. Catalog-only products are excluded.
             Already-enabled products stay unchanged. Listings with missing mappings, running cycles or protected stock corrections are skipped with a reason.
             Future imports still require explicit enrollment.</p>
           <Form method="post">
             <input type="hidden" name="intent" value="enable-all" />
             <label className="checkbox-label"><span><input type="checkbox" name="confirm" value="inventory-all-current" required disabled={busy} />
               I approve inventory-only sync for all currently imported eligible products. Prices and publication stay unchanged.</span></label>
-            <s-button type="submit" variant="primary" disabled={busy || enabled === products.length}
+            <s-button type="submit" variant="primary" disabled={busy || eligible.every((product) => product.enabled)}
               loading={busy && navigation.formData?.get("intent") === "enable-all"}>Enable inventory sync for all</s-button>
             {busy && navigation.formData?.get("intent") === "enable-all" && <p role="status">Verifying all imported listings and enabling eligible products. This can take a moment for a large catalog.</p>}
           </Form>
@@ -129,7 +131,7 @@ export default function Inventory() {
           <caption className="visually-hidden">Imported product inventory enrollment and latest results</caption>
           <thead><tr><th scope="col">Product</th><th scope="col">Sync status</th><th scope="col">Last successful sync</th><th scope="col">Actions</th></tr></thead>
           <tbody>{visible.map((product) => <tr key={product.supplierId}>
-            <td><strong>{supplierText(product.name)}</strong><small>{product.sku}</small>
+            <td><strong>{supplierText(product.name)}</strong><small>{product.sku}</small><small>{fulfillmentLabel(product.fulfillmentMode)}</small>
               <p><a href={`https://admin.shopify.com/store/ultralove-integration-lab/products/${product.productId?.split("/").at(-1)}`}
                 target="_blank" rel="noreferrer">Open in Shopify (new tab)</a></p></td>
             <td><span className="status-badge">{statusLabel(product.status)}</span>{product.variantCount !== null && <small>{product.variantCount} mapped variants</small>}
@@ -138,7 +140,7 @@ export default function Inventory() {
             <td>{formatTime(product.lastSuccessAt)}</td>
             <td><Form method="post">
               <input type="hidden" name="supplierId" value={product.supplierId} />
-              {!product.enabled ? <>
+              {product.fulfillmentMode === "CATALOG" && !product.enabled ? <p>Your own stock — supplier sync unavailable. Set inventory in Shopify.</p> : !product.enabled ? <>
                 <input type="hidden" name="intent" value="enable" />
                 <details><summary>Enable inventory sync</summary>
                   <p>Update supplier-backed stock about every five minutes. Prices and publication stay unchanged.</p>
@@ -148,7 +150,7 @@ export default function Inventory() {
                 </details>
               </> : <>
                 <div className="inventory-actions"><button type="submit" name="intent" value="pause" disabled={busy}>Pause sync</button>
-                <button type="submit" name="intent" value="sync-now" disabled={busy || product.status === "RUNNING"}>Sync now</button></div>
+                {product.fulfillmentMode === "DROPSHIPPING" && <button type="submit" name="intent" value="sync-now" disabled={busy || product.status === "RUNNING"}>Sync now</button>}</div>
               </>}
             </Form></td>
           </tr>)}</tbody>

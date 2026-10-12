@@ -35,7 +35,7 @@ real catalog information and test-store listings.
 
 **Store domain:** `ultralove-integration-lab.myshopify.com`
 
-**App name:** **UltraLove Dropshipping Lab**
+**App name:** **UltraLove Catalog** (formerly **UltraLove Dropshipping Lab**)
 
 ### Your login details
 
@@ -55,12 +55,12 @@ in this document. If an existing review account is being used instead, its
 credentials must be supplied separately through an approved private channel.
 Do not use UltraLove's WordPress login to sign in to Shopify.
 
-## 3. Open the UltraLove Dropshipping Lab app
+## 3. Open the UltraLove Catalog app
 
 1. Open the Shopify admin link above and sign in.
 2. Confirm that the selected store is **ultralove-integration-lab**.
 3. Open **Apps** in Shopify's navigation or app menu.
-4. Select **UltraLove Dropshipping Lab**. If it is not immediately visible,
+4. Select **UltraLove Catalog**. If it is not immediately visible,
    use Shopify's search to find the installed app by that name.
 5. The app opens inside Shopify admin. Its main workspace provides
    **Catalog**, **Selection & pricing**, **Imports**, and **Inventory**.
@@ -95,6 +95,14 @@ Open **Selection & pricing**.
 - Search selected products by name, SKU or supplier ID. The list shows
   25 products per page, so large selections remain manageable.
 - **Save changes** saves the selection and pricing without importing.
+- Under **How will you fulfill these products?**, choose a mode for the whole
+  selection, or choose separately beside each product:
+  - **Catalog only — my own stock** is the default. Import product content
+    without UltraLove inventory quantities or supplier sync. Set your own stock
+    in Shopify before publishing.
+  - **Dropshipping — supplier inventory** imports supplier availability and
+    makes the product eligible for separately confirmed inventory sync.
+    It does not approve or enable order forwarding.
 
 For example, a CAD \$10.00 supplier price with a 50% markup produces a
 CAD \$15.00 retail price. Markup is not profit margin. Shipping, taxes, fees and
@@ -139,7 +147,9 @@ before trying again; the app does not repeatedly upload duplicates.
 
 Open **Inventory**.
 
-Inventory sync is opt-in for each imported product. Enabled products are
+Inventory sync is opt-in for imported **dropshipping-mode** products only.
+Catalog-only products remain retailer-managed and cannot be enrolled, even
+with **Enable all**. Enabled products are
 scheduled about every five minutes, with queued imports taking priority.
 
 - **Enable inventory sync** requires explicit confirmation.

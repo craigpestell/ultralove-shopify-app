@@ -563,6 +563,27 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
     await runInventoryCycle(shop, 1900, api);
     assert.equal(mutationRequests, expiredRequests, "an incomplete shared ledger cannot be replayed with a changed subset");
     assert.match((await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 1900 } } })).error, /incomplete or inconsistent/);
+    await seed(2900, [2901]);
+    await db.importClaim.update({ where: { shop_supplierId: { shop, supplierId: 2900 } }, data: { fulfillmentMode: "CATALOG" } });
+    const catalogBaseline = { contextRequests, inventoryRequests, mutationRequests };
+    await assert.rejects(inventoryControl(shop, 2900, "enable", api, "inventory-only"), /retailer-managed/);
+    await assert.rejects(inventoryControl(shop, 2900, "sync-now", api), /retailer-managed/);
+    assert.deepEqual({ contextRequests, inventoryRequests, mutationRequests }, catalogBaseline, "catalog-only requests never reach Shopify inventory");
+    const mixedEnrollment = await enableAllInventory(shop, api, "inventory-all-current");
+    assert.ok(mixedEnrollment.blocked.some((product) => product.supplierId === 2900 && /own stock/.test(product.error)));
+    assert.equal(await db.inventorySync.count({ where: { shop, supplierId: 2900 } }), 0, "enable-all cannot enroll catalog-only products");
+    await db.inventorySync.create({ data: {
+      shop, supplierId: 2900, productId: "gid://shopify/Product/2900", locationId: location,
+      mappings: JSON.stringify([{ sourceId: 2901, variantId: "gid://shopify/ProductVariant/2901", inventoryItemId: "gid://shopify/InventoryItem/2901" }]),
+      enabled: true, status: "QUEUED", nextRunAt: new Date(0),
+    } });
+    const requestsBeforeCatalogCycle = mutationRequests;
+    await runInventoryCycle(shop, 2900, api);
+    assert.equal(mutationRequests, requestsBeforeCatalogCycle, "a stale enabled state cannot overwrite retailer-managed stock");
+    const catalogSync = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 2900 } } });
+    assert.equal(catalogSync.enabled, false);
+    assert.equal(catalogSync.status, "REVIEW");
+    assert.match(catalogSync.error, /fulfillment mode/);
     auth.rejected = true;
     await assert.rejects(loader({ request: new Request("https://app.example/app/inventory") }), (error) => error.status === 403);
   } finally {

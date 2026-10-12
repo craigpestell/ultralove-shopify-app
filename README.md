@@ -1,6 +1,7 @@
 # UltraLove Shopify app
 
-Separate web interface for the existing **UltraLove Dropshipping Lab** app,
+Separate web interface for the existing **UltraLove Catalog** app (formerly
+**UltraLove Dropshipping Lab**),
 scaffolded from Shopify's MIT-licensed React Router template. The upstream
 license remains in [LICENSE.md](LICENSE.md).
 
@@ -91,6 +92,38 @@ Store publication for newly imported products. The additional publication scopes
 are authorized for the existing lab installation.
 
 ## Pricing and product-import jobs
+
+### Fulfillment choices
+
+New selections default to **Catalog only — my own stock**. Choose
+**How will you fulfill these products?** to apply a mode to the whole selected
+batch, or override individual products beside their markup. Choices persist
+with the selection and immutable review; confirmation covers every product's
+mode. Changing working choices does not change existing Shopify stock or sync.
+
+- **Catalog only:** import content, variants, SKUs and reviewed prices without
+  `inventoryQuantities`. Tracking stays on and overselling is denied; Shopify
+  stock is empty/zero until the retailer sets their own quantities. New products
+  default to drafts. Supplier inventory enrollment, bulk enrollment and
+  scheduled corrections are blocked for these products.
+- **Dropshipping:** import supplier availability. Inventory sync still needs
+  explicit enrollment after import. This choice does not grant dropshipping
+  approval or enable order forwarding. Approval and fulfillment activation
+  remain separate; the lab app still has no order-forwarding feature.
+
+Existing import snapshots and claims migrate as dropshipping to preserve their
+current payloads and opt-in sync. Existing enrollments, quantities and publication
+are not changed by deployment. Switching an imported product's mode requires a
+new confirmed review; pause sync and reconcile pending corrections first.
+Switching modes never changes existing stock automatically.
+The additive `20261012030000_fulfillment_modes` migration must run before the new
+app and worker. The Shopify Apps-list name is separate platform configuration:
+changing this web UI alone does not rename the installed app.
+The existing app's name-only configuration version `ultralove-catalog-name`
+(`1163369840641`) is active, and **UltraLove Catalog** is verified in the
+integration lab's installed Apps list. The app ID, existing installation,
+permissions, embedded URL and redirects are unchanged. The old URL handle
+`ultralove-dropshipping-lab` is intentionally retained.
 
 In **Catalog**, select one or more parents, then open **Selection & pricing** and set the
 **Default retail markup** between 0 and 1000 percent, with at most two decimal
