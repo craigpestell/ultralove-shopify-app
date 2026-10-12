@@ -59,9 +59,10 @@ Existing `/app/imports` bookmarks redirect to `/app` with their job and embedded
 authentication query context retained; legacy preview/queue/retry forms remain
 supported. The task-oriented redesign, with uncapped product selections and
 reviewed existing-listing updates/recovery, is deployed to the integration lab
-as release `12162e9`, including selection/review search and pagination,
+as release `6630e89`, including selection/review search and pagination,
 HTML-normalized update verification and asynchronous image-readiness waiting
-before publication.
+before publication, plus missing-listing inventory pause and verified stock
+correction recovery.
 
 The feed-selection catalog rows show the first supplier product image as a
 48-pixel thumbnail. Hover, focus with the keyboard, or tap/click the thumbnail
@@ -784,6 +785,63 @@ The previous release and rollback symlink point to
 and scopes remain unchanged. The two pre-existing inventory-response failures
 remain outside this release.
 
+### Inventory missing-listing and stock recovery deployment, 2026-10-11
+
+Release `6630e8981f93d6b932e397a8c66b305ab57d7e80` is committed, pushed
+and deployed from its exact archive to the isolated integration lab. GitHub
+App checks passed (run `38188259124`). It includes missing-listing handling
+from `b9d95e5` and current-API stock input adaptation from `87d2517`.
+
+Both original inventory failures (supplier IDs 71955 and 19969) were successful
+Shopify lookups returning `product:null`, not malformed supplier-feed responses.
+Their saved Shopify listings were no longer available. They now remain paused
+in Needs review with explicit fresh-import-review guidance; mappings,
+checkpoints and pending corrections are preserved. No replacement was created
+or inventory re-enabled for either product.
+
+Controlled live verification exposed two additional stock-path issues:
+the pinned Admin API rejects the old `compareQuantity` wire field, and replay
+of an already-applied uncertain correction returned a stale-comparison error.
+Stock requests now send `changeFromQuantity`, leaving persisted corrections
+unchanged. Recovery first verifies the approved pending quantities against
+Shopify, skipping a confirmed write rather than relying only on replay.
+Unconfirmed corrections still use their exact persisted input and retry key.
+
+All 71 tests, typecheck, lint and app/worker builds passed locally, on the
+deployment host and in CI. No migrations were pending. Offline tests cover
+nonzero Shopify order reservations, uncertain sent/unsent corrections,
+withdrawal, 250-quantity batching, missing listings and explicit recovery.
+
+With the user's approval, supplier 17186 (SKU 1513) was temporarily enrolled
+for live stock-only verification while the singleton worker was stopped and
+its lock held. Its original on-hand stock was 327, with zero committed units.
+Shopify rejected a stale comparison without changing stock. A one-unit drift
+was corrected to 327; an acknowledged-response loss left a durable pending
+record, and retry verified the stock without sending a duplicate correction.
+Pause prevented updates, and explicit resume corrected a second one-unit drift.
+Retailer content, prices, media, identity and product status were unchanged.
+The original stock/reservations were restored and the temporary enrollment
+removed. Live nonzero reservations were not manufactured; those remain covered
+by isolated tests. No orders, publication or source-stock changes were made.
+
+Both earlier failed verification attempts restored the sample before returning
+their error. Protected recovery journals are retained under the lab backup
+directory; temporary scripts and app-data journals were removed. The final
+recovery journal is `inventory-verification-recovery-20261012.json` (0600).
+
+Final comparison against `inventory-reconcile-baseline-20261012.sqlite`
+confirmed exact preservation of all 35 jobs, 1,632 items, 227 claims, saved
+selection/pricing and the two paused inventory rows. The earlier baseline
+`inventory-missing-baseline-20261012T002154Z.sqlite` retains their original
+enabled/failed state. The final protected deployment backup is
+`20261012T003045467044Z.sqlite` (0600). SQLite integrity/foreign keys, services
+and HTTPS passed; deployed source hashes match the commit.
+
+The previous-release symlink points to intermediate release `87d2517`.
+For a full rollback before these inventory changes, use `12162e9`; the
+intermediate release still has the uncertain-replay issue described above.
+Production, supplier/proxy code, scopes and app configuration were unchanged.
+
 ## Existing Shopify app
 
 Verified in the Dev Dashboard on 2026-10-09:
@@ -880,7 +938,7 @@ and approval.
 
 ## Current host and rollback
 
-The deployed release is `12162e9` on the isolated integration-lab
+The deployed release is `6630e89` on the isolated integration-lab
 droplet. Node 24.21.0 runs as `ultralove-shopify` on `127.0.0.1:3097`,
 proxied by its separate HTTPS Nginx vhost. Source is under
 `/srv/ultralove-shopify/releases`; `current` selects the release.
