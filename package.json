@@ -25,7 +25,7 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@prisma/client": "^6.19.3",
+    "@prisma/client": "^7.10.0",
     "@react-router/dev": "7.18.2",
     "@react-router/fs-routes": "7.18.2",
     "@react-router/express": "7.18.2",
@@ -37,7 +37,7 @@
     "express": "^5.2.1",
     "entities": "^8.1.0",
     "parse5": "^8.0.1",
-    "prisma": "^6.19.3",
+    "prisma": "^7.10.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-router": "7.18.2",
