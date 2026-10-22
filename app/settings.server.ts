@@ -14,11 +14,31 @@ export type UpdateStatus = { checkedAt: string; result: (typeof UPDATE_RESULTS)[
 /** Automatic updates stay on until someone turns them off, including before the row exists. */
 export async function appSettings() {
   const row = await prisma.appSettings.findUnique({ where: { id: ID } });
-  return { autoUpdates: row?.autoUpdates ?? true, updatedAt: row?.updatedAt.toISOString() ?? null };
+  return { autoUpdates: row?.autoUpdates ?? true, inventoryPaused: row?.inventoryPaused ?? false };
 }
 
-export async function setAutoUpdates(autoUpdates: boolean) {
-  await prisma.appSettings.upsert({ where: { id: ID }, create: { id: ID, autoUpdates }, update: { autoUpdates } });
+export async function updateSettings(change: { autoUpdates: boolean } | { inventoryPaused: boolean }) {
+  await prisma.appSettings.upsert({ where: { id: ID }, create: { id: ID, ...change }, update: change });
+}
+
+/** True while inventory sync is paused for every product from Settings. */
+export async function inventoryPaused() {
+  return (await prisma.appSettings.findUnique({ where: { id: ID }, select: { inventoryPaused: true } }))?.inventoryPaused ?? false;
+}
+
+type InventoryRow = { deletedAt: string | null; enabled: boolean; status: string; error: string | null; lastSuccessAt: string | null; nextRunAt: string | null };
+
+/** Totals for the Settings page from the Inventory page's rows, ignoring deleted listings. */
+export function inventoryHealth(products: InventoryRow[]) {
+  const enabled = products.filter((product) => !product.deletedAt && product.enabled);
+  const latest = (values: (string | null)[], pick: (a: string, b: string) => string) =>
+    values.reduce<string | null>((found, value) => !value ? found : !found ? value : pick(found, value), null);
+  return {
+    enabled: enabled.length,
+    review: products.filter((product) => !product.deletedAt && (product.error || ["FAILED", "REVIEW"].includes(product.status))).length,
+    lastSuccessAt: latest(enabled.map((product) => product.lastSuccessAt), (a, b) => a > b ? a : b),
+    nextRunAt: latest(enabled.map((product) => product.nextRunAt), (a, b) => a < b ? a : b),
+  };
 }
 
 /** The live release and when provisioning switched to it, or null outside the lab host. */

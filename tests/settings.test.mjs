@@ -10,7 +10,7 @@ test("settings read the live release, the last update check and the catalog conn
     server: { middlewareMode: true, watch: null, hmr: false, ws: false }, appType: "custom" });
   const directory = await mkdtemp(join(tmpdir(), "ultralove-settings-"));
   try {
-    const { currentRelease, updateStatus, catalogConnection } = await server.ssrLoadModule("/app/settings.server.ts");
+    const { currentRelease, updateStatus, catalogConnection, inventoryHealth } = await server.ssrLoadModule("/app/settings.server.ts");
     const { CatalogError } = await server.ssrLoadModule("/app/catalog.server.ts");
     const sha = "a".repeat(40);
 
@@ -38,6 +38,15 @@ test("settings read the live release, the last update check and the catalog conn
     const down = await catalogConnection(async () => { throw new CatalogError("Supplier connection is unavailable."); });
     assert.deepEqual([down.connected, down.error], [false, "Supplier connection is unavailable."]);
     await assert.rejects(catalogConnection(async () => { throw new TypeError("bug"); }), TypeError, "programming errors still surface");
+
+    const row = (fields) => ({ deletedAt: null, enabled: true, status: "SYNCED", error: null, lastSuccessAt: null, nextRunAt: null, ...fields });
+    assert.deepEqual(inventoryHealth([]), { enabled: 0, review: 0, lastSuccessAt: null, nextRunAt: null });
+    assert.deepEqual(inventoryHealth([
+      row({ lastSuccessAt: "2026-10-22T07:00:00.000Z", nextRunAt: "2026-10-22T07:05:00.000Z" }),
+      row({ lastSuccessAt: "2026-10-22T07:02:00.000Z", nextRunAt: "2026-10-22T07:03:00.000Z", status: "FAILED", error: "Mapping changed" }),
+      row({ enabled: false, status: "NOT_ENROLLED" }),
+      row({ deletedAt: "2026-10-21T00:00:00.000Z", status: "DELETED", error: "Gone", lastSuccessAt: "2026-10-22T08:00:00.000Z" }),
+    ]), { enabled: 2, review: 1, lastSuccessAt: "2026-10-22T07:02:00.000Z", nextRunAt: "2026-10-22T07:03:00.000Z" }, "deleted listings never count");
   } finally {
     await rm(directory, { recursive: true, force: true });
     await server.close();
