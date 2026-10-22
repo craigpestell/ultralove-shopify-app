@@ -130,3 +130,14 @@ model AppSettings {
   inventoryPaused Boolean @default(false)
   updatedAt   DateTime @updatedAt
 }
+
+// The latest supplier feed schema version check, kept in one row. Imports and inventory sync
+// stop while result is "unsupported" or "invalid" (see app/feed-version.ts).
+model FeedVersionCheck {
+  id        String   @id @default("lab")
+  checkedAt DateTime
+  trigger   String
+  version   String?
+  result    String
+  reason    String?
+}

@@ -4,6 +4,7 @@ import db from "./db.server";
 import { CATALOG_BATCH_SIZE, selectionIds } from "./catalog-policy";
 import { importPlan, validateSelection } from "./catalog.server";
 import { assertLabShop } from "./lab-policy.server";
+import { feedVersionGate } from "./feed-version.server";
 import { ImportError, MAX_PREVIEW_AGE, catalogOnlyPayload, importConfirmation, importDraft, importSettings, markupPercent, matchProduct, onlineStorePublication, ownedProduct, payload, plannedFeed, priceRange, remoteCatalog, reviewLabels, shopContext } from "./import-engine";
 import type { GraphQL } from "./import-engine";
 import { markupOverrides, retailPrice } from "./pricing-policy";
@@ -67,6 +68,8 @@ export async function createPreview(shop: string, markup: string, api: GraphQL, 
   const modes = fulfillmentModes(configuration?.fulfillmentModes ?? (configuration ? {} : (await savedConfiguration(shop)).fulfillmentModes), ids);
   const location = await shopContext(api, shop);
   const settings = importSettings(choices.active, choices.publish ? await onlineStorePublication(api) : null);
+  const version = await feedVersionGate("preview");
+  if (!version.allowed) throw new ImportError(`${version.reason} Nothing was saved.`);
   const run = randomBytes(16).toString("hex");
   const first = ids.slice(0, CATALOG_BATCH_SIZE);
   const plan = plannedFeed(await importPlan(first, location, run, normalized), first, run, location);
@@ -262,6 +265,8 @@ export async function runJob(id: string, shop: string, api: GraphQL, stopping: (
     if (settings.publicationId && await onlineStorePublication(api) !== settings.publicationId) {
       throw new ImportError("The Online Store publication changed since preview. Create a fresh preview; no new product was created or published.");
     }
+    const version = await feedVersionGate("import");
+    if (!version.allowed) throw new ImportError(`Import paused before any change. ${version.reason}`);
     await validateSelection(ids);
     const products = await remoteCatalog(api);
     for (const item of job.items) {

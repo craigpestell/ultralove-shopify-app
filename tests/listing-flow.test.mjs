@@ -21,6 +21,8 @@ test("Prisma listing previews/worker persist approvals, recover missing mappings
       return `
         import { retailPrice } from "/app/pricing-policy.ts";
         const source = ${JSON.stringify(supplierInput)};
+        export class CatalogError extends Error {}
+        export async function categoriesPage() { return { categories: [], next_after_id: 0, has_more: false, schemaVersion: "1.2" }; }
         export async function validateSelection() {}
         export async function importPlan(ids, location, run, markup) {
           return { generation: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", cursor: 1,

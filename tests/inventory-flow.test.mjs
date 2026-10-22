@@ -21,7 +21,11 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
           export class CatalogError extends Error {
             constructor(message,retryAfter=null) { super(message);this.retryAfter=retryAfter; }
           }
-          export const feed = { value: null, reads: [], batches: [], hook: null, error: null };
+          export const feed = { value: null, reads: [], batches: [], hook: null, error: null, schemaVersion: "1.2", versionChecks: 0 };
+          export async function categoriesPage() {
+            feed.versionChecks++;
+            return { categories: [], next_after_id: 0, has_more: false, schemaVersion: feed.schemaVersion };
+          }
           export async function inventoryState(id, checkpoint) {
             feed.reads.push({id,checkpoint});
             if(feed.hook) await feed.hook();
@@ -194,6 +198,39 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
     await assert.rejects(inventoryControl(shop, 100, "enable", api), /Confirm/);
     await assert.rejects(inventoryControl("foreign.myshopify.com", 100, "enable", api, "inventory-only"));
     await inventoryControl(shop, 100, "enable", api, "inventory-only");
+    const { lastFeedVersionCheck, BLOCKED_RECHECK_AGE } = await server.ssrLoadModule("/app/feed-version.server.ts");
+    feed.schemaVersion = "2.0";
+    const enrolled = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 100 } } });
+    await runInventoryCycle(shop, 100, api);
+    assert.deepEqual([feed.reads.length, feed.versionChecks, mutations], [0, 1, 0], "a breaking feed version pauses sync before any read or write");
+    assert.deepEqual(await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 100 } } }), enrolled,
+      "paused products keep their state, like the Settings pause");
+    assert.deepEqual([(await lastFeedVersionCheck()).trigger, (await lastFeedVersionCheck()).result], ["inventory", "unsupported"]);
+    const renderSettings = async () => {
+      const settingsRoute = await server.ssrLoadModule("/app/routes/app.settings.tsx");
+      const { WorkspaceProvider } = await server.ssrLoadModule("/app/workspace.tsx");
+      const handler = createStaticHandler([{ id: "settings", path: "/app/settings", loader: settingsRoute.loader, Component: () =>
+        createElement(WorkspaceProvider, { shop, saved: { selected: [], markup: "0", markups: {} } }, createElement(settingsRoute.default)) }]);
+      const context = await handler.query(new Request("https://app.example/app/settings"));
+      return renderToStaticMarkup(createElement(StaticRouterProvider, { router: createStaticRouter(handler.dataRoutes, context), context }));
+    };
+    const settingsHtml = await renderSettings();
+    for (const shown of ["Supplier feed version", "Imports and inventory sync are paused", "<dt>Feed version</dt><dd>2.0</dd>",
+      "<dt>Supported versions</dt><dd>1.x (written for 1.2)</dd>", "Checked before inventory sync.", "<dt>Result</dt><dd>Not supported</dd>",
+      "<dt>Paused because</dt><dd>The supplier feed uses schema 2.0", "Check feed version now"]) {
+      assert.ok(settingsHtml.includes(shown), `Settings shows: ${shown}`);
+    }
+    feed.schemaVersion = "1.2";
+    await runInventoryCycle(shop, 100, api);
+    assert.deepEqual([feed.reads.length, feed.versionChecks], [0, 1], "the block is reused instead of asking the feed every cycle");
+    await db.feedVersionCheck.update({ where: { id: "lab" }, data: { checkedAt: new Date(Date.now() - BLOCKED_RECHECK_AGE + 1000) } });
+    const { action: settingsAction } = await server.ssrLoadModule("/app/routes/app.settings.tsx");
+    const checked = await settingsAction({ request: new Request("https://app.example/app/settings", {
+      method: "POST", body: new URLSearchParams([["intent", "check-feed-version"]]) }) });
+    assert.equal(checked.data.checked, "compatible", "Check feed version now lifts the pause once the feed is supported again");
+    const resumedHtml = await renderSettings();
+    assert.ok(!resumedHtml.includes("Imports and inventory sync are paused"));
+    assert.ok(resumedHtml.includes("<dt>Feed version</dt><dd>1.2</dd>") && resumedHtml.includes("Checked from Settings."));
     loseResponse = true;
     await runInventoryCycle(shop, 100, api);
     let state = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 100 } } });

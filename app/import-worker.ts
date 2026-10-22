@@ -9,6 +9,7 @@ import { LISTING_CHECK_INTERVAL, verifyImportedListings } from "./listing-lifecy
 import { publishImportStatus } from "./storefront-status.server";
 import { STATUS_INTERVAL } from "./storefront-status";
 import { inventoryPaused } from "./settings.server";
+import { feedVersionGate } from "./feed-version.server";
 
 let stopping = false;
 let listingRetryAt = 0;
@@ -80,7 +81,8 @@ while (!stopping) {
     // Paused from Settings: enrolled products keep their state and run when sync resumes.
     const sync = await inventoryPaused() ? [] : await db.inventorySync.findMany({ where: { shop: LAB_SHOP, enabled: true, nextRunAt: { lte: new Date() }, status: { not: "RUNNING" } },
       orderBy: [{ nextRunAt: "asc" }, { supplierId: "asc" }], take: INVENTORY_PRODUCT_BATCH_SIZE });
-    if (!sync.length) {
+    // An unsupported supplier feed schema pauses sync too; feedVersionGate looks again every few minutes.
+    if (!sync.length || !(await feedVersionGate("inventory")).allowed) {
       await publishStatus();
       await setTimeout(2000);
       continue;
