@@ -1,4 +1,5 @@
-import { lstat, readFile, readlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { lstat, readFile, readlink, writeFile } from "node:fs/promises";
 import { basename } from "node:path";
 import prisma from "./db.server";
 import { categoriesPage, CatalogError } from "./catalog.server";
@@ -7,9 +8,14 @@ const ID = "lab";
 // Written by provisioning and ops/lab-pull-deploy.sh on the lab host; absent in development.
 const CURRENT_RELEASE = "/srv/ultralove-shopify/current";
 const UPDATE_STATUS = "/var/lib/ultralove-shopify-deploy/status.json";
-const UPDATE_RESULTS = ["off", "current", "waiting", "deployed", "failed", "error"] as const;
+// Watched by ultralove-shopify-deploy.path, which starts a check when a new request ID is written.
+const UPDATE_REQUEST = "/var/lib/ultralove-shopify/update-check-request";
+const UPDATE_RESULTS = ["off", "current", "waiting", "deploying", "deployed", "failed", "error"] as const;
+const REQUEST_ID = /^[a-f0-9-]{36}$/;
 
-export type UpdateStatus = { checkedAt: string; result: (typeof UPDATE_RESULTS)[number]; release: string | null; checks: string | null };
+export type UpdateStatus = {
+  checkedAt: string; result: (typeof UPDATE_RESULTS)[number]; release: string | null; checks: string | null; request: string | null;
+};
 
 /** Automatic updates stay on until someone turns them off, including before the row exists. */
 export async function appSettings() {
@@ -57,17 +63,33 @@ export async function updateStatus(path = UPDATE_STATUS): Promise<UpdateStatus |
   try {
     const value: unknown = JSON.parse(await readFile(path, "utf8"));
     if (typeof value !== "object" || value === null) return null;
-    const { checkedAt, result, release, checks } = value as Record<string, unknown>;
+    const { checkedAt, result, release, checks, request } = value as Record<string, unknown>;
     if (typeof checkedAt !== "string" || Number.isNaN(Date.parse(checkedAt)) ||
         !UPDATE_RESULTS.includes(result as UpdateStatus["result"])) return null;
     return {
       checkedAt: new Date(checkedAt).toISOString(), result: result as UpdateStatus["result"],
       release: typeof release === "string" && /^[a-f0-9]{40}$/.test(release) ? release : null,
       checks: typeof checks === "string" && /^[a-z_]{1,40}$/.test(checks) ? checks : null,
+      request: typeof request === "string" && REQUEST_ID.test(request) ? request : null,
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * Asks the lab to check for a new release now. Returns the request ID that the check's
+ * recorded status will carry, or null where there is no lab deploy service to ask.
+ */
+export async function requestUpdateCheck(path = UPDATE_REQUEST) {
+  const request = randomUUID();
+  try {
+    await writeFile(path, `${request}\n`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return null;
+  }
+  return request;
 }
 
 /** Reads one page of supplier categories to prove the catalog feed answers. */

@@ -1,0 +1,10 @@
+[Unit]
+Description=Check for a new UltraLove Catalog release when Settings asks for one
+
+[Path]
+# The app writes a new request ID here from Settings > Check now.
+PathModified=/var/lib/ultralove-shopify/update-check-request
+Unit=ultralove-shopify-deploy.service
+
+[Install]
+WantedBy=paths.target

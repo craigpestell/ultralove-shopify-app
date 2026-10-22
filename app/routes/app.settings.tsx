@@ -1,9 +1,10 @@
+import { useEffect, useState } from "react";
 import type { ChangeEvent } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { data, Form, useActionData, useLoaderData, useLocation, useNavigation, useRouteError, useSubmit } from "react-router";
+import { data, Form, useActionData, useLoaderData, useLocation, useNavigation, useRevalidator, useRouteError, useSubmit } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticateLabAdmin } from "../shopify.server";
-import { appSettings, catalogConnection, currentRelease, inventoryHealth, updateSettings, updateStatus } from "../settings.server";
+import { appSettings, catalogConnection, currentRelease, inventoryHealth, requestUpdateCheck, updateSettings, updateStatus } from "../settings.server";
 import { inventoryScreen } from "../inventory.server";
 import type { UpdateStatus } from "../settings.server";
 import { checkFeedVersion, lastFeedVersionCheck } from "../feed-version.server";
@@ -15,6 +16,8 @@ import { PendingLink, RequestFeedback, useNetworkState } from "../network-state"
 import "../catalog.css";
 
 const REPOSITORY = "https://github.com/craigpestell/ultralove-shopify-app";
+// A check usually answers within seconds; give up waiting on screen after this long.
+const CHECK_WAIT_MS = 3 * 60 * 1000;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticateLabAdmin(request);
@@ -27,6 +30,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   await authenticateLabAdmin(request);
   const form = await request.formData();
   const intent = form.get("intent");
+  if (intent === "check-updates") {
+    const request = await requestUpdateCheck();
+    return request ? data({ intent, error: null, on: null, catalog: null, request })
+      : data({ intent, error: "Update checks can only run on the lab server.", on: null, catalog: null, request: null }, { status: 503 });
+  }
   if (intent === "check-catalog") return data({ intent, error: null, on: null, catalog: await catalogConnection() });
   // The loader reloads the recorded check after this, so the page shows it.
   if (intent === "check-feed-version") return data({ intent, error: null, on: null, catalog: null, checked: (await checkFeedVersion("settings")).result });
@@ -48,6 +56,7 @@ function updateSummary(update: UpdateStatus) {
     case "off": return "Skipped because automatic updates are off.";
     case "current": return "No new release. The lab is up to date.";
     case "waiting": return `Found release${release}, waiting for its checks (${update.checks ?? "unknown"}).`;
+    case "deploying": return `Installing release${release}. The app restarts when it finishes, usually within a few minutes.`;
     case "deployed": return `Installed release${release}.`;
     case "failed": return `Release${release} failed to install. The previous version is still running; it is retried when a newer release lands.`;
     case "error": return "The check could not finish. See the deploy log on the lab host.";
@@ -77,6 +86,19 @@ export default function Settings() {
   const pausing = pending({ intent: "inventory-sync" });
   const checking = pending({ intent: "check-catalog" });
   const checkingVersion = pending({ intent: "check-feed-version" });
+  const requestingCheck = pending({ intent: "check-updates" });
+  const revalidator = useRevalidator();
+  // After Check now, reload until the lab records a result carrying this request's ID.
+  const checkRequest = result && "request" in result ? result.request : null;
+  const answered = checkRequest && update?.request === checkRequest ? update : null;
+  const [gaveUpOn, setGaveUpOn] = useState<string | null>(null);
+  const awaitingCheck = Boolean(checkRequest && !answered && gaveUpOn !== checkRequest);
+  useEffect(() => {
+    if (!awaitingCheck || !checkRequest) return;
+    const poll = setInterval(() => { if (revalidator.state === "idle") revalidator.revalidate(); }, 3000);
+    const giveUp = setTimeout(() => setGaveUpOn(checkRequest), CHECK_WAIT_MS);
+    return () => { clearInterval(poll); clearTimeout(giveUp); };
+  }, [awaitingCheck, checkRequest, revalidator]);
   // Show the requested position while it saves, so a switch does not snap back.
   const requested = navigation.formData?.get("value");
   const autoUpdates = saving ? requested === "on" : settings.autoUpdates;
@@ -91,18 +113,29 @@ export default function Settings() {
       <div className="settings-layout">
         <section className="workspace-panel settings-panel" aria-labelledby="auto-updates-heading">
           <h2 id="auto-updates-heading">Automatic app updates</h2>
-          <p>Every 5 minutes the lab checks for a new release of this app and installs it once its checks have passed.
-            Turn this off to stay on the current version. Manual deploys still work while it is off.</p>
+          <p>Once a day the lab checks for a new release of this app and installs it once its checks have passed.
+            Turn this off to stay on the current version. Check now and manual deploys still work while it is off.</p>
           <label className="settings-switch">
             <input type="checkbox" role="switch" checked={autoUpdates} disabled={busy} aria-busy={saving || undefined}
               onChange={toggle("auto-updates")} />
-            <span>Check for updates every 5 minutes</span>
+            <span>Check for updates every 24 hours</span>
             <span className="status-badge">{autoUpdates ? "On" : "Off"}</span>
           </label>
           <RequestFeedback pending={saving} pendingMessage="Saving" error={result?.error} errorHeading="Setting not saved"
             success={result?.intent === "auto-updates" && !busy
-              ? result.on ? "Automatic updates are on. The next check runs within 5 minutes." : "Automatic updates are off. The lab stays on its current version."
+              ? result.on ? "Automatic updates are on. The next check runs within 24 hours, or use Check now." : "Automatic updates are off. The lab stays on its current version."
               : undefined} />
+          <Form method="post">
+            <input type="hidden" name="intent" value="check-updates" />
+            <s-button type="submit" disabled={busy || awaitingCheck} loading={requestingCheck || awaitingCheck}>Check now</s-button>
+          </Form>
+          <small>Checks for a new release right away and installs it if its checks have passed, even while automatic updates are off.</small>
+          <RequestFeedback pending={requestingCheck || awaitingCheck} pendingMessage="Checking for a new release"
+            error={result?.intent === "check-updates" && !busy ? result.error ?? (answered && ["failed", "error"].includes(answered.result) ? updateSummary(answered)
+              : checkRequest && gaveUpOn === checkRequest && !answered ? "No result yet. The check may still be running; its result will appear under Last update check." : undefined) : undefined}
+            errorHeading="Update check did not finish"
+            success={answered && !["failed", "error"].includes(answered.result) ? updateSummary(answered) : undefined}
+            successHeading="Update check finished" />
         </section>
         <section className="workspace-panel settings-panel" aria-labelledby="inventory-heading">
           <h2 id="inventory-heading">Inventory sync</h2>
