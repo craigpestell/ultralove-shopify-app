@@ -1,0 +1,10 @@
+{%- comment -%}
+  Status pill for import and inventory sync states. Usage: {% render 'ultralove-status-badge', status: 'COMPLETE' %}
+{%- endcomment -%}
+{%- case status -%}
+  {%- when 'COMPLETE', 'SYNCED' -%}{%- assign tone = 'good' -%}
+  {%- when 'FAILED', 'REVIEW' -%}{%- assign tone = 'bad' -%}
+  {%- when 'QUEUED', 'RUNNING' -%}{%- assign tone = 'busy' -%}
+  {%- else -%}{%- assign tone = 'neutral' -%}
+{%- endcase -%}
+<span class="ul-pill ul-pill--{{ tone }}">{{ status | downcase | capitalize }}</span>

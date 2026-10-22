@@ -1172,6 +1172,34 @@ participant's pending record to make an older worker proceed.
 Missing listings 71955 and 19969 remain paused for reviewed recovery.
 Bulk enrollment was not executed on the live store; production is unchanged.
 
+## Lab storefront catalog and import status
+
+`theme/` holds Online Store theme files for the lab store. They add alternate
+templates only, so the theme's default templates are untouched:
+
+- `collection.ultralove` is a product grid: `/collections/all?view=ultralove`,
+  or `/collections/all/ultralove-catalog-import?view=ultralove` for imported
+  products only. Cards open products with `?view=ultralove`.
+- `product.ultralove` shows the gallery, one select per option, and the selected
+  variant's price, compare-at price, SKU and stock, with an add-to-cart form and
+  a table of every variant. Products with only the default variant hide the picker.
+- `page.import-status` shows the latest import (start and finish time, products
+  and variants created, updated, failed and pending, errors), recent imports, and
+  the inventory sync summary. Assign it to a page such as `/pages/import-status`.
+
+The import status comes from the shop metafield `ultralove.import_status`
+(JSON). The worker (`app/storefront-status.server.ts`) rewrites it at most once
+a minute after a job or inventory batch, and every 15 minutes otherwise. Shop
+metafields are readable in Liquid without a storefront access definition, so no
+scope or app deploy is needed. Imported products are drafts unless the import
+publishes them, so only published ones appear in the grid.
+
+Push the files to the lab theme without touching the rest of it:
+
+```bash
+shopify theme push --store ultralove-integration-lab.myshopify.com --path theme --nodelete
+```
+
 ## Current host and rollback
 
 The deployed release is `b6a2af4` on the isolated integration-lab

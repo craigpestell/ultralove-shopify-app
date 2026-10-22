@@ -6,9 +6,13 @@ import { runJob } from "./imports.server";
 import { runInventoryBatch } from "./inventory.server";
 import { INVENTORY_INTERVAL, INVENTORY_PRODUCT_BATCH_SIZE } from "./inventory-engine";
 import { LISTING_CHECK_INTERVAL, verifyImportedListings } from "./listing-lifecycle.server";
+import { publishImportStatus } from "./storefront-status.server";
+import { STATUS_INTERVAL } from "./storefront-status";
 
 let stopping = false;
 let listingRetryAt = 0;
+let statusDirty = true;
+let statusPublishedAt = 0;
 process.on("SIGTERM", () => { stopping = true; });
 process.on("SIGINT", () => { stopping = true; });
 
@@ -16,9 +20,31 @@ assertLabShop(LAB_SHOP);
 await db.importJob.updateMany({ where: { shop: LAB_SHOP, status: "RUNNING" }, data: { status: "QUEUED" } });
 await db.inventorySync.updateMany({ where: { shop: LAB_SHOP, enabled: true, status: "RUNNING" }, data: { status: "QUEUED" } });
 console.info("Lab-only product import and inventory worker ready.");
+
+// Refreshes the storefront import status after work changed it, at most once
+// per STATUS_INTERVAL, and at least every 15 minutes so its timestamps stay current.
+async function publishStatus() {
+  const elapsed = Date.now() - statusPublishedAt;
+  if (elapsed < STATUS_INTERVAL || (!statusDirty && elapsed < 15 * STATUS_INTERVAL)) return;
+  statusPublishedAt = Date.now();
+  try {
+    const { admin, session } = await shopify.unauthenticated.admin(LAB_SHOP);
+    assertLabShop(session.shop);
+    await publishImportStatus(LAB_SHOP, async (query, variables) => {
+      const response = await admin.graphql(query, { variables, tries: 1 });
+      return response.json();
+    });
+    statusDirty = false;
+  } catch (error) {
+    console.error("Storefront import status publish failed.", error instanceof Error ? error.message : "Unknown failure");
+  }
+}
+
 while (!stopping) {
   const job = await db.importJob.findFirst({ where: { shop: LAB_SHOP, status: "QUEUED" }, orderBy: { createdAt: "asc" } });
   if (job) {
+    statusDirty = true;
+    statusPublishedAt = 0;
     try {
       const { admin, session } = await shopify.unauthenticated.admin(LAB_SHOP);
       assertLabShop(session.shop);
@@ -53,9 +79,11 @@ while (!stopping) {
     const sync = await db.inventorySync.findMany({ where: { shop: LAB_SHOP, enabled: true, nextRunAt: { lte: new Date() }, status: { not: "RUNNING" } },
       orderBy: [{ nextRunAt: "asc" }, { supplierId: "asc" }], take: INVENTORY_PRODUCT_BATCH_SIZE });
     if (!sync.length) {
+      await publishStatus();
       await setTimeout(2000);
       continue;
     }
+    statusDirty = true;
     try {
       const { admin, session } = await shopify.unauthenticated.admin(LAB_SHOP);
       assertLabShop(session.shop);
