@@ -12,7 +12,7 @@ app.use((request, response, next) => {
   next();
 });
 app.use(express.static("build/client", { index: false }));
-app.all("*", createRequestHandler({ build, mode: process.env.NODE_ENV }));
+app.all("/{*splat}", createRequestHandler({ build, mode: process.env.NODE_ENV }));
 app.listen(Number(process.env.PORT || 3097), process.env.HOST || "127.0.0.1", () => {
   console.info("UltraLove Shopify interface listening.");
 });

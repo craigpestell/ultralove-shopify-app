@@ -1188,6 +1188,21 @@ enrollment/checkpoints share the
 session database; pre-migration backups are root-only under
 `/srv/ultralove-shopify/backups`.
 
+### Deploying a release
+
+From a workstation with root SSH access to the lab, run
+`ops/deploy-lab.sh [git ref]` (default `origin/main`). It refuses a commit whose
+**App checks** run did not pass (override with `FORCE=1`), copies the exact
+`git archive` to `releases/<full SHA>`, and runs `ops/provision-lab.sh` there.
+Provisioning backs up the SQLite database, runs `npm ci`, migrations and
+`npm run check`, and boots the release on spare port 3098 before switching
+`current`/`previous` and restarting both services; a release that cannot boot
+leaves `current` unchanged. The script then checks the services and HTTPS.
+`ops/deploy-lab.sh --rollback` reprovisions the release `previous` points to;
+migrations are additive and are not reversed. This deploys app code only:
+`shopify.app.toml` scopes and webhooks need a reviewed `shopify app deploy`
+(see [Existing Shopify app](#existing-shopify-app)).
+
 ### Inventory deployment verification, 2026-10-09
 
 - App code commit/release `107030bcd7f7824095d9140dd305fe186c94ba7d`;
