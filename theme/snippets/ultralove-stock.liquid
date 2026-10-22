@@ -1,12 +1,11 @@
 {%- comment -%}
-  Stock text for one variant. Usage: {% render 'ultralove-stock', variant: variant %}
+  Stock text for one variant: "N in stock" or "Out of stock" ("In stock" when inventory is not tracked).
+  Usage: {% render 'ultralove-stock', variant: variant %}
 {%- endcomment -%}
-{%- if variant.inventory_management == blank -%}
-  {%- if variant.available %}In stock{% else %}Unavailable{% endif -%}
+{%- if variant.inventory_management == blank and variant.available -%}
+  In stock
 {%- elsif variant.inventory_quantity > 0 -%}
   {{ variant.inventory_quantity }} in stock
-{%- elsif variant.available -%}
-  Out of stock, can be ordered
 {%- else -%}
   Out of stock
 {%- endif -%}
