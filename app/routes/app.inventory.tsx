@@ -10,12 +10,14 @@ import { useWorkspace, WorkspaceNav } from "../workspace";
 import { statusLabel, workspaceHref } from "../workspace-policy";
 import { fulfillmentLabel } from "../fulfillment-policy";
 import InventoryRecovery from "../inventory-recovery";
+import { inventoryPaused } from "../settings.server";
 import { PendingLink, RequestFeedback, useNetworkState } from "../network-state";
 import "../catalog.css";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticateLabAdmin(request);
-  return { products: await inventoryScreen(session.shop) };
+  const [products, paused] = await Promise.all([inventoryScreen(session.shop), inventoryPaused()]);
+  return { products, paused };
 };
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticateLabAdmin(request);
@@ -48,7 +50,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Inventory() {
-  const { products } = useLoaderData<typeof loader>();
+  const { products, paused } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
   const revalidator = useRevalidator();
   const { draft } = useWorkspace();
@@ -80,6 +82,8 @@ export default function Inventory() {
         <WorkspaceNav current="inventory" />
         <header className="workspace-header"><div><h1>Inventory</h1><p>Manage your own stock for catalog-only products. Opt into supplier sync only for dropshipping products.</p></div>
           <PendingLink to={catalogHref}>Add products from catalog</PendingLink></header>
+        {paused && <s-banner heading="Inventory sync is paused for every product" tone="warning">
+          No stock updates run until it is resumed in <PendingLink to={workspaceHref(location.search, "settings")}>Settings</PendingLink>. Product settings below are kept.</s-banner>}
         <div className="inventory-overview" aria-label="Inventory overview">
           <button type="button" aria-pressed={filter === "all"} onClick={() => setFilter("all")}><strong>{currentProducts.length}</strong> Current imported products</button>
           <button type="button" aria-pressed={filter === "enabled"} onClick={() => setFilter("enabled")}><strong>{enabled}</strong> Sync on</button>

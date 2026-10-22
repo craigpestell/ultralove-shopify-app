@@ -1,33 +1,36 @@
+import type { ChangeEvent } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { data, Form, useActionData, useLoaderData, useNavigation, useRouteError, useSubmit } from "react-router";
+import { data, Form, useActionData, useLoaderData, useLocation, useNavigation, useRouteError, useSubmit } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticateLabAdmin } from "../shopify.server";
-import { appSettings, catalogConnection, currentRelease, setAutoUpdates, updateStatus } from "../settings.server";
+import { appSettings, catalogConnection, currentRelease, inventoryHealth, updateSettings, updateStatus } from "../settings.server";
+import { inventoryScreen } from "../inventory.server";
 import type { UpdateStatus } from "../settings.server";
 import { WorkspaceNav } from "../workspace";
-import { RequestFeedback, useNetworkState } from "../network-state";
+import { workspaceHref } from "../workspace-policy";
+import { PendingLink, RequestFeedback, useNetworkState } from "../network-state";
 import "../catalog.css";
 
 const REPOSITORY = "https://github.com/craigpestell/ultralove-shopify-app";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticateLabAdmin(request);
-  const [settings, release, update] = await Promise.all([appSettings(), currentRelease(), updateStatus()]);
-  return { settings, release, update };
+  const { session } = await authenticateLabAdmin(request);
+  const [settings, release, update, products] = await Promise.all([appSettings(), currentRelease(), updateStatus(), inventoryScreen(session.shop)]);
+  return { settings, release, update, inventory: inventoryHealth(products) };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   await authenticateLabAdmin(request);
   const form = await request.formData();
   const intent = form.get("intent");
-  if (intent === "check-catalog") return data({ intent, error: null, autoUpdates: null, catalog: await catalogConnection() });
-  const values = form.getAll("autoUpdates");
-  if (intent !== "auto-updates" || values.length !== 1 || !["on", "off"].includes(String(values[0]))) {
-    return data({ intent: null, error: "Choose on or off for automatic updates.", autoUpdates: null, catalog: null }, { status: 400 });
+  if (intent === "check-catalog") return data({ intent, error: null, on: null, catalog: await catalogConnection() });
+  const values = form.getAll("value");
+  if ((intent !== "auto-updates" && intent !== "inventory-sync") || values.length !== 1 || !["on", "off"].includes(String(values[0]))) {
+    return data({ intent: null, error: "Choose on or off for this setting.", on: null, catalog: null }, { status: 400 });
   }
-  const autoUpdates = values[0] === "on";
-  await setAutoUpdates(autoUpdates);
-  return data({ intent, error: null, autoUpdates, catalog: null });
+  const on = values[0] === "on";
+  await updateSettings(intent === "auto-updates" ? { autoUpdates: on } : { inventoryPaused: !on });
+  return data({ intent, error: null, on, catalog: null });
 };
 
 const formatTime = (value: string) => new Date(value).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" });
@@ -46,16 +49,21 @@ function updateSummary(update: UpdateStatus) {
 }
 
 export default function Settings() {
-  const { settings, release, update } = useLoaderData<typeof loader>();
+  const { settings, release, update, inventory } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
+  const location = useLocation();
   const { busy, pending } = useNetworkState();
   const saving = pending({ intent: "auto-updates" });
+  const pausing = pending({ intent: "inventory-sync" });
   const checking = pending({ intent: "check-catalog" });
-  // Show the requested position while it saves, so the switch does not snap back.
-  const requested = saving ? navigation.formData?.get("autoUpdates") : null;
-  const autoUpdates = requested ? requested === "on" : settings.autoUpdates;
+  // Show the requested position while it saves, so a switch does not snap back.
+  const requested = navigation.formData?.get("value");
+  const autoUpdates = saving ? requested === "on" : settings.autoUpdates;
+  const inventorySync = pausing ? requested === "on" : !settings.inventoryPaused;
+  const toggle = (intent: string) => (event: ChangeEvent<HTMLInputElement>) =>
+    submit({ intent, value: event.currentTarget.checked ? "on" : "off" }, { method: "post" });
   const catalog = result?.intent === "check-catalog" ? result.catalog : null;
   return <s-page heading="UltraLove Catalog" inlineSize="large">
     <div className="catalog-browser workspace">
@@ -68,15 +76,35 @@ export default function Settings() {
             Turn this off to stay on the current version. Manual deploys still work while it is off.</p>
           <label className="settings-switch">
             <input type="checkbox" role="switch" checked={autoUpdates} disabled={busy} aria-busy={saving || undefined}
-              onChange={(event) => submit({ intent: "auto-updates", autoUpdates: event.currentTarget.checked ? "on" : "off" }, { method: "post" })} />
+              onChange={toggle("auto-updates")} />
             <span>Check for updates every 5 minutes</span>
             <span className="status-badge">{autoUpdates ? "On" : "Off"}</span>
           </label>
-          {settings.updatedAt && !saving && <small>Last changed {formatTime(settings.updatedAt)}</small>}
           <RequestFeedback pending={saving} pendingMessage="Saving" error={result?.error} errorHeading="Setting not saved"
             success={result?.intent === "auto-updates" && !busy
-              ? result.autoUpdates ? "Automatic updates are on. The next check runs within 5 minutes." : "Automatic updates are off. The lab stays on its current version."
+              ? result.on ? "Automatic updates are on. The next check runs within 5 minutes." : "Automatic updates are off. The lab stays on its current version."
               : undefined} />
+        </section>
+        <section className="workspace-panel settings-panel" aria-labelledby="inventory-heading">
+          <h2 id="inventory-heading">Inventory sync</h2>
+          <p>Products with sync on update their stock from the supplier about every 5 minutes. Pause sync for every product at once
+            during maintenance or a supplier problem. Each product keeps its own setting and catches up when sync resumes.</p>
+          <label className="settings-switch">
+            <input type="checkbox" role="switch" checked={inventorySync} disabled={busy} aria-busy={pausing || undefined}
+              onChange={toggle("inventory-sync")} />
+            <span>Run inventory sync</span>
+            <span className="status-badge">{inventorySync ? "Running" : "Paused"}</span>
+          </label>
+          <RequestFeedback pending={pausing} pendingMessage="Saving"
+            success={result?.intent === "inventory-sync" && !busy
+              ? result.on ? "Inventory sync resumed. Products that are due update first." : "Inventory sync paused for every product. An update already sent to Shopify may finish."
+              : undefined} />
+          <dl className="settings-facts">
+            <dt>Products with sync on</dt><dd>{inventory.enabled}</dd>
+            <dt>Need review</dt><dd>{inventory.review ? <PendingLink to={workspaceHref(location.search, "inventory")}>{inventory.review} (review on Inventory)</PendingLink> : 0}</dd>
+            <dt>Last successful sync</dt><dd>{inventory.lastSuccessAt ? formatTime(inventory.lastSuccessAt) : "None yet"}</dd>
+            {inventory.enabled > 0 && !settings.inventoryPaused && inventory.nextRunAt && <><dt>Next due</dt><dd>{formatTime(inventory.nextRunAt)}</dd></>}
+          </dl>
         </section>
         <section className="workspace-panel settings-panel" aria-labelledby="version-heading">
           <h2 id="version-heading">App version</h2>

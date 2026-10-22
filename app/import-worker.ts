@@ -8,6 +8,7 @@ import { INVENTORY_INTERVAL, INVENTORY_PRODUCT_BATCH_SIZE } from "./inventory-en
 import { LISTING_CHECK_INTERVAL, verifyImportedListings } from "./listing-lifecycle.server";
 import { publishImportStatus } from "./storefront-status.server";
 import { STATUS_INTERVAL } from "./storefront-status";
+import { inventoryPaused } from "./settings.server";
 
 let stopping = false;
 let listingRetryAt = 0;
@@ -76,7 +77,8 @@ while (!stopping) {
         listingRetryAt = Date.now() + LISTING_CHECK_INTERVAL;
       }
     }
-    const sync = await db.inventorySync.findMany({ where: { shop: LAB_SHOP, enabled: true, nextRunAt: { lte: new Date() }, status: { not: "RUNNING" } },
+    // Paused from Settings: enrolled products keep their state and run when sync resumes.
+    const sync = await inventoryPaused() ? [] : await db.inventorySync.findMany({ where: { shop: LAB_SHOP, enabled: true, nextRunAt: { lte: new Date() }, status: { not: "RUNNING" } },
       orderBy: [{ nextRunAt: "asc" }, { supplierId: "asc" }], take: INVENTORY_PRODUCT_BATCH_SIZE });
     if (!sync.length) {
       await publishStatus();
