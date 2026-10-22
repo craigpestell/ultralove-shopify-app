@@ -23,7 +23,8 @@ else
     echo "Deploying $ref ($release)"
 
     if command -v gh >/dev/null; then
-        checks="$(gh run list --commit "$release" --workflow "App checks" --json conclusion --jq '.[0].conclusion' 2>/dev/null || true)"
+        repository="$(git remote get-url origin | sed -E 's#^(https://github.com/|git@github.com:)##; s#\.git$##')"
+        checks="$(gh run list --repo "$repository" --commit "$release" --workflow "App checks" --json conclusion --jq '.[0].conclusion' 2>/dev/null || true)"
         if [[ "$checks" != success ]]; then
             echo "App checks for $release: ${checks:-not found}." >&2
             [[ "${FORCE:-}" == 1 ]] || { echo "Set FORCE=1 to deploy anyway." >&2; exit 1; }
