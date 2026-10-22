@@ -24,9 +24,7 @@ export function WorkspaceProvider({ shop, saved, children }: { shop: string; sav
       // Restore after hydration so server HTML never depends on browser-only storage.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       if (restored) setDraft((current) => ({ ...restored, products: { ...current.products, ...restored.products } }));
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     } catch { setStorageAvailable(false); }
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setHydrated(true);
     // The server baseline is reconciled by the catalog after successful saves.
     // eslint-disable-next-line react-hooks/exhaustive-deps

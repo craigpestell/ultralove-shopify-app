@@ -11,7 +11,6 @@ import { AdminLoadingBar } from "../network-state";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticateLabAdmin(request);
 
-  // eslint-disable-next-line no-undef
   return { apiKey: process.env.SHOPIFY_API_KEY || "", shop: session.shop, saved: await savedConfiguration(session.shop) };
 };
 
