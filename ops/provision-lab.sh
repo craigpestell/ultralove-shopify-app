@@ -67,6 +67,30 @@ PY
 fi
 runuser -u ultralove-shopify -- env PATH="$PATH" DATABASE_URL=file:/var/lib/ultralove-shopify/sessions.sqlite \
     bash -c 'cd "$1" && npm ci && npm run setup && npm run check' bash "$directory"
+smoke_directory="$(mktemp -d /tmp/ultralove-smoke.XXXXXX)"
+chown ultralove-shopify:ultralove-shopify "$smoke_directory"
+if ! runuser -u ultralove-shopify -- env -i PATH="$PATH" NODE_ENV=production HOST=127.0.0.1 PORT=3098 \
+    SHOPIFY_APP_URL=https://shopify-lab.104-248-211-144.sslip.io SHOPIFY_API_KEY=smoke \
+    SHOPIFY_API_SECRET=smoke SCOPES=read_products DATABASE_URL="file:$smoke_directory/smoke.sqlite" \
+    bash -c '
+        cd "$1" || exit 1
+        node server.mjs >"$2/server.log" 2>&1 &
+        server=$!
+        trap "kill $server 2>/dev/null; wait $server 2>/dev/null" EXIT
+        for attempt in {1..30}; do
+            curl --fail --silent http://127.0.0.1:3098/ | grep "UltraLove Catalog" >/dev/null && exit 0
+            kill -0 "$server" 2>/dev/null || break
+            sleep 1
+        done
+        tail -n 20 "$2/server.log" >&2
+        exit 1
+    ' bash "$directory" "$smoke_directory"; then
+    rm -rf "$smoke_directory"
+    echo "Release failed to boot on a spare port; current release unchanged" >&2
+    exit 1
+fi
+rm -rf "$smoke_directory"
+
 chown -R root:root "$directory"
 chmod -R a+rX "$directory"
 chmod -R go-w "$directory"
