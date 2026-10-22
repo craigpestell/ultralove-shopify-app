@@ -4,7 +4,7 @@
   while there is news. Used by templates/page.import-status.json.
 {%- endcomment -%}
 {%- assign status = shop.metafields.ultralove.import_status.value -%}
-<div class="ul-status page-width">
+<div class="ul-status section page-width-content">
   <header class="ul-status__header">
     <h1>{{ section.settings.heading | escape }}</h1>
     {%- if status -%}
@@ -116,7 +116,7 @@
 </div>
 
 {% stylesheet %}
-  .ul-status { padding-block: 32px 64px; max-width: 1024px; }
+  .ul-status { padding-block: 32px 64px; }
   .ul-status__header { margin-bottom: 32px; }
   .ul-status__header h1 { margin: 0 0 8px; }
   .ul-status__block { margin-bottom: 64px; }
@@ -127,16 +127,16 @@
   .ul-muted { margin: 0; opacity: 0.7; }
   .ul-bad { color: #b3261e; font-weight: 600; }
   .ul-table { width: 100%; border-collapse: collapse; }
-  .ul-table th, .ul-table td { padding: 8px; text-align: left; border-bottom: 1px solid rgba(var(--color-foreground, 18, 18, 18), 0.1); }
+  .ul-table th, .ul-table td { padding: 8px; text-align: left; border-bottom: 1px solid rgb(var(--color-foreground-rgb) / 0.1); }
   .ul-table--numbers td { font-variant-numeric: tabular-nums; }
   .ul-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 192px), 1fr)); gap: 16px; margin: 0 0 16px; }
-  .ul-stats div { padding: 16px; border-radius: 8px; background: rgba(var(--color-foreground, 18, 18, 18), 0.04); }
-  .ul-stats dt { font-size: 1.3rem; opacity: 0.7; }
-  .ul-stats dd { margin: 4px 0 0; font-size: 2rem; }
+  .ul-stats div { padding: 16px; border-radius: 8px; background: rgb(var(--color-foreground-rgb) / 0.04); }
+  .ul-stats dt { font-size: 14px; opacity: 0.7; }
+  .ul-stats dd { margin: 4px 0 0; font-size: 24px; }
   .ul-issues { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
   .ul-issues li { padding: 16px; border-left: 4px solid #b3261e; border-radius: 4px; background: rgba(179, 38, 30, 0.06); }
-  .ul-empty { padding: 32px; border: 1px dashed rgba(var(--color-foreground, 18, 18, 18), 0.3); border-radius: 8px; }
-  .ul-pill { display: inline-block; padding: 4px 8px; border-radius: 16px; font-size: 1.2rem; font-weight: 600; letter-spacing: 0.04em; background: rgba(var(--color-foreground, 18, 18, 18), 0.08); }
+  .ul-empty { padding: 32px; border: 1px dashed rgb(var(--color-foreground-rgb) / 0.3); border-radius: 8px; }
+  .ul-pill { display: inline-block; padding: 4px 8px; border-radius: 16px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; background: rgb(var(--color-foreground-rgb) / 0.08); }
   .ul-pill--good { background: #dcefe0; color: #1e5b2c; }
   .ul-pill--bad { background: #f9dedc; color: #8c1d18; }
   .ul-pill--busy { background: #fdf0c8; color: #6b4f00; }

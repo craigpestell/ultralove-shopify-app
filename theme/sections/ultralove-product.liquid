@@ -8,7 +8,8 @@
   assign current = product.selected_or_first_available_variant
   assign form_id = 'ul-product-form-' | append: section.id
 -%}
-<div class="ul-product page-width" data-ul-product>
+<div class="section page-width-normal">
+<div class="ul-product" data-ul-product>
   <div class="ul-product__gallery">
     {%- if product.media.size > 0 -%}
       {%- for media in product.media -%}
@@ -115,10 +116,11 @@
     ]
   </script>
 </div>
+</div>
 
 <script>
   (() => {
-    const root = document.currentScript.previousElementSibling;
+    const root = document.currentScript.previousElementSibling.querySelector('[data-ul-product]');
     const variants = JSON.parse(root.querySelector('[data-ul-variants]').textContent);
     const selects = [...root.querySelectorAll('[data-ul-option]')];
     if (!selects.length) return;
@@ -160,22 +162,22 @@
   .ul-product__media img, .ul-product__media svg { width: 100%; height: 100%; object-fit: cover; }
   .ul-product__title { margin: 0 0 8px; }
   .ul-product__vendor { margin: 0 0 16px; opacity: 0.7; }
-  .ul-product__price { display: flex; gap: 8px; align-items: baseline; margin: 0 0 32px; font-size: 2rem; }
-  .ul-product__price s { font-size: 1.6rem; opacity: 0.6; }
+  .ul-product__price { display: flex; gap: 8px; align-items: baseline; margin: 0 0 32px; font-size: 24px; }
+  .ul-product__price s { font-size: 16px; opacity: 0.6; }
   .ul-product__options { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; margin-bottom: 16px; }
   .ul-field { display: flex; flex-direction: column; gap: 4px; }
-  .ul-field__label { font-size: 1.3rem; opacity: 0.7; }
-  .ul-field select, .ul-field input { min-height: 48px; padding: 0 16px; font: inherit; border: 1px solid rgba(var(--color-foreground, 18, 18, 18), 0.3); border-radius: 8px; background: transparent; color: inherit; }
+  .ul-field__label { font-size: 14px; opacity: 0.7; }
+  .ul-field select, .ul-field input { min-height: 48px; padding: 0 16px; font: inherit; border: 1px solid rgb(var(--color-foreground-rgb) / 0.3); border-radius: 8px; background: transparent; color: inherit; }
   .ul-field--qty input { width: 96px; }
   .ul-product__facts { display: flex; flex-wrap: wrap; gap: 16px 32px; margin: 0 0 32px; }
-  .ul-product__facts dt { font-size: 1.3rem; opacity: 0.7; }
+  .ul-product__facts dt { font-size: 14px; opacity: 0.7; }
   .ul-product__facts dd { margin: 0; }
   .ul-product__buy { display: flex; align-items: end; gap: 16px; }
   .ul-product__buy .button { flex: 1; min-height: 48px; }
   .ul-product__variants { margin-top: 32px; }
   .ul-product__variants summary { cursor: pointer; }
-  .ul-product__variants table { width: 100%; margin-top: 16px; border-collapse: collapse; font-size: 1.4rem; }
-  .ul-product__variants th, .ul-product__variants td { padding: 8px; text-align: left; border-bottom: 1px solid rgba(var(--color-foreground, 18, 18, 18), 0.1); }
+  .ul-product__variants table { width: 100%; margin-top: 16px; border-collapse: collapse; font-size: 14px; }
+  .ul-product__variants th, .ul-product__variants td { padding: 8px; text-align: left; border-bottom: 1px solid rgb(var(--color-foreground-rgb) / 0.1); }
   .ul-product__description { margin-top: 32px; }
 {% endstylesheet %}
 

@@ -4,7 +4,7 @@
   for UltraLove imports only. Cards open the product with the ultralove product template.
 {%- endcomment -%}
 {%- paginate collection.products by section.settings.per_page -%}
-  <div class="ul-catalog page-width">
+  <div class="ul-catalog section page-width-normal">
     <header class="ul-catalog__header">
       <h1 class="ul-catalog__title">{{ section.settings.heading | default: collection.title | escape }}</h1>
       <p class="ul-catalog__count">
@@ -82,19 +82,19 @@
   .ul-catalog__count { margin: 0; opacity: 0.7; }
   .ul-catalog__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 224px), 1fr)); gap: 32px 16px; margin: 0; padding: 0; list-style: none; }
   .ul-card__link { display: flex; flex-direction: column; height: 100%; color: inherit; text-decoration: none; }
-  .ul-card__media { position: relative; aspect-ratio: 1; overflow: hidden; border-radius: 8px; background: rgba(var(--color-foreground, 18, 18, 18), 0.04); }
+  .ul-card__media { position: relative; aspect-ratio: 1; overflow: hidden; border-radius: 8px; background: rgb(var(--color-foreground-rgb) / 0.04); }
   .ul-card__media img, .ul-card__placeholder { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s ease; }
   .ul-card__link:hover .ul-card__media img { transform: scale(1.04); }
   .ul-card__body { padding-top: 16px; }
-  .ul-card__title { margin: 0 0 8px; font-size: 1.6rem; line-height: 1.3; }
+  .ul-card__title { margin: 0 0 8px; font-size: 16px; line-height: 1.3; }
   .ul-card__link:hover .ul-card__title, .ul-card__link:focus-visible .ul-card__title { text-decoration: underline; }
   .ul-card__price, .ul-card__meta { margin: 0; }
   .ul-card__compare { margin-left: 8px; opacity: 0.6; }
-  .ul-card__meta { margin-top: 4px; font-size: 1.3rem; opacity: 0.7; }
-  .ul-badge { position: absolute; top: 8px; left: 8px; padding: 4px 8px; border-radius: 16px; font-size: 1.2rem; background: rgb(var(--color-background, 255, 255, 255)); }
+  .ul-card__meta { margin-top: 4px; font-size: 14px; opacity: 0.7; }
+  .ul-badge { position: absolute; top: 8px; left: 8px; padding: 4px 8px; border-radius: 16px; font-size: 12px; background: var(--color-background); }
   .ul-badge--muted { opacity: 0.85; }
   .ul-pagination { display: flex; justify-content: center; align-items: center; gap: 32px; margin-top: 64px; }
-  .ul-empty { padding: 32px; border: 1px dashed rgba(var(--color-foreground, 18, 18, 18), 0.3); border-radius: 8px; }
+  .ul-empty { padding: 32px; border: 1px dashed rgb(var(--color-foreground-rgb) / 0.3); border-radius: 8px; }
 {% endstylesheet %}
 
 {% schema %}
