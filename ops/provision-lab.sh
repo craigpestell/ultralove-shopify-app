@@ -107,14 +107,18 @@ install -m 644 "$directory/ops/ultralove-shopify-imports.service" /etc/systemd/s
 install -m 755 "$directory/ops/lab-pull-deploy.sh" /usr/local/sbin/ultralove-shopify-deploy
 install -m 644 "$directory/ops/ultralove-shopify-deploy.service" /etc/systemd/system/ultralove-shopify-deploy.service
 install -m 644 "$directory/ops/ultralove-shopify-deploy.timer" /etc/systemd/system/ultralove-shopify-deploy.timer
+install -m 644 "$directory/ops/ultralove-shopify-deploy.path" /etc/systemd/system/ultralove-shopify-deploy.path
 systemd-analyze verify /etc/systemd/system/ultralove-shopify.service /etc/systemd/system/ultralove-shopify-imports.service \
-    /etc/systemd/system/ultralove-shopify-deploy.service /etc/systemd/system/ultralove-shopify-deploy.timer
+    /etc/systemd/system/ultralove-shopify-deploy.service /etc/systemd/system/ultralove-shopify-deploy.timer \
+    /etc/systemd/system/ultralove-shopify-deploy.path
 systemctl daemon-reload
 systemctl enable ultralove-shopify
 systemctl restart ultralove-shopify
 systemctl enable ultralove-shopify-imports
 systemctl restart ultralove-shopify-imports
-systemctl enable --now ultralove-shopify-deploy.timer
+systemctl enable --now ultralove-shopify-deploy.timer ultralove-shopify-deploy.path
+# Pick up a changed schedule now rather than after the previously scheduled run.
+systemctl restart ultralove-shopify-deploy.timer
 systemctl is-active ultralove-shopify
 ready=false
 for attempt in {1..30}; do

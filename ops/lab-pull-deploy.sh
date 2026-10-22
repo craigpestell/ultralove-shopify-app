@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Pull deploy for the integration lab, installed by provisioning as
-# /usr/local/sbin/ultralove-shopify-deploy and run every few minutes by
-# ultralove-shopify-deploy.timer. Fetches main from GitHub and deploys its tip once
+# /usr/local/sbin/ultralove-shopify-deploy and run every 24 hours by
+# ultralove-shopify-deploy.timer, and by ultralove-shopify-deploy.path when the app's
+# Settings page asks for a check now. Fetches main from GitHub and deploys its tip once
 # its App checks run has passed. A release that fails to provision is recorded and
 # not retried until main moves on. Timer runs do nothing while automatic updates are
-# off in the app's Settings page; an explicit SHA still deploys. Each run writes its
-# outcome to status.json, which the Settings page shows.
+# off in Settings; a check requested from Settings or an explicit SHA still runs. Each
+# run writes its outcome to status.json, with the request ID it answers, for Settings.
 # Usage: ultralove-shopify-deploy [full commit SHA]   (default: tip of main)
 {
 set -euo pipefail
@@ -15,6 +16,9 @@ root=/srv/ultralove-shopify
 source="$root/source.git"
 failed=/var/lib/ultralove-shopify-deploy/failed
 status=/var/lib/ultralove-shopify-deploy/status.json
+request_file=/var/lib/ultralove-shopify/update-check-request
+handled=/var/lib/ultralove-shopify-deploy/handled-request
+request=""
 recorded=false
 
 exec 9>/run/ultralove-shopify-deploy.lock
@@ -22,15 +26,25 @@ flock 9
 
 install -d -m 755 "${status%/*}"
 record() {
-    printf '{"checkedAt":"%s","result":"%s","release":"%s","checks":"%s"}\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${2:-}" "${3:-}" >"$status.tmp"
+    printf '{"checkedAt":"%s","result":"%s","release":"%s","checks":"%s","request":"%s"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${2:-}" "${3:-}" "$request" >"$status.tmp"
     mv "$status.tmp" "$status"
     recorded=true
 }
 trap 'code=$?; [[ $code == 0 || $recorded == true ]] || record error' EXIT
 
+# A request ID that has not been answered yet means Settings asked for a check now.
+if [[ $# == 0 && -f "$request_file" ]]; then
+    candidate="$(head -c 100 "$request_file" | tr -d '\n')"
+    if [[ "$candidate" =~ ^[a-f0-9-]{36}$ && "$candidate" != "$(cat "$handled" 2>/dev/null)" ]]; then
+        request="$candidate"
+        echo "$request" >"$handled"
+        echo "Checking now, as requested from Settings."
+    fi
+fi
+
 # A missing database, table or row means automatic updates are on.
-if [[ $# == 0 ]] && ! python3 - <<'PY'
+if [[ $# == 0 && -z "$request" ]] && ! python3 - <<'PY'
 import sqlite3, sys
 try:
     with sqlite3.connect("file:/var/lib/ultralove-shopify/sessions.sqlite?mode=ro", uri=True) as db:
@@ -77,6 +91,8 @@ if [[ ! -e "$directory" ]]; then
     mv "$directory.tmp" "$directory"
 fi
 install -d -m 755 "${failed%/*}"
+# Provisioning restarts the app, so Settings learns the outcome before it goes away.
+record deploying "$release"
 if ! bash "$directory/ops/provision-lab.sh" "$release"; then
     echo "$release" >"$failed"
     record failed "$release"

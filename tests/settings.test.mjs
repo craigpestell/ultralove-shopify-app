@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -10,7 +10,7 @@ test("settings read the live release, the last update check and the catalog conn
     server: { middlewareMode: true, watch: null, hmr: false, ws: false }, appType: "custom" });
   const directory = await mkdtemp(join(tmpdir(), "ultralove-settings-"));
   try {
-    const { currentRelease, updateStatus, catalogConnection, inventoryHealth } = await server.ssrLoadModule("/app/settings.server.ts");
+    const { currentRelease, updateStatus, catalogConnection, inventoryHealth, requestUpdateCheck } = await server.ssrLoadModule("/app/settings.server.ts");
     const { CatalogError } = await server.ssrLoadModule("/app/catalog.server.ts");
     const sha = "a".repeat(40);
 
@@ -26,11 +26,20 @@ test("settings read the live release, the last update check and the catalog conn
     const status = join(directory, "status.json");
     assert.equal(await updateStatus(status), null, "no check recorded yet");
     await writeFile(status, JSON.stringify({ checkedAt: "2026-10-22T07:00:00Z", result: "waiting", release: sha, checks: "in_progress" }));
-    assert.deepEqual(await updateStatus(status), { checkedAt: "2026-10-22T07:00:00.000Z", result: "waiting", release: sha, checks: "in_progress" });
+    assert.deepEqual(await updateStatus(status), { checkedAt: "2026-10-22T07:00:00.000Z", result: "waiting", release: sha, checks: "in_progress", request: null });
     await writeFile(status, JSON.stringify({ checkedAt: "2026-10-22T07:00:00Z", result: "off", release: "", checks: "" }));
-    assert.deepEqual(await updateStatus(status), { checkedAt: "2026-10-22T07:00:00.000Z", result: "off", release: null, checks: null });
+    assert.deepEqual(await updateStatus(status), { checkedAt: "2026-10-22T07:00:00.000Z", result: "off", release: null, checks: null, request: null });
     await writeFile(status, JSON.stringify({ checkedAt: "2026-10-22T07:00:00Z", result: "<script>", release: sha }));
     assert.equal(await updateStatus(status), null, "unknown results are ignored");
+    const request = await requestUpdateCheck(join(directory, "update-check-request"));
+    assert.match(request, /^[a-f0-9-]{36}$/);
+    assert.equal(await readFile(join(directory, "update-check-request"), "utf8"), `${request}\n`, "the deploy path unit watches this file");
+    assert.equal(await requestUpdateCheck(join(directory, "missing", "update-check-request")), null, "no lab deploy service in development");
+    await writeFile(status, JSON.stringify({ checkedAt: "2026-10-22T07:00:00Z", result: "deploying", release: sha, checks: "", request }));
+    assert.deepEqual(await updateStatus(status), { checkedAt: "2026-10-22T07:00:00.000Z", result: "deploying", release: sha, checks: null, request },
+      "Check now matches its answer by request ID");
+    await writeFile(status, JSON.stringify({ checkedAt: "2026-10-22T07:00:00Z", result: "current", request: "../../etc" }));
+    assert.equal((await updateStatus(status)).request, null);
     await writeFile(status, "{not json");
     assert.equal(await updateStatus(status), null, "a half-written file is ignored");
 

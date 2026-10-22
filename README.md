@@ -1259,14 +1259,19 @@ migrations are additive and are not reversed. This deploys app code only:
 Merges to `main` deploy automatically. The lab pulls rather than GitHub
 pushing, so SSH stays closed to everything but the maintainer's address:
 `ultralove-shopify-deploy.timer` runs `/usr/local/sbin/ultralove-shopify-deploy`
-(installed from `ops/lab-pull-deploy.sh` by provisioning) every 5 minutes. It
-fetches `main` from GitHub and, when its tip differs from `current` and its
+(installed from `ops/lab-pull-deploy.sh` by provisioning) every 24 hours, and
+`ultralove-shopify-deploy.path` runs it right away when **Check now** on the
+app's Settings page writes a new request ID to
+`/var/lib/ultralove-shopify/update-check-request`. After merging, use Check now
+to deploy without waiting for the daily run. It fetches `main` from GitHub and, when its tip differs from `current` and its
 **App checks** push run has passed, provisions it as above. A release that fails
 to provision is recorded in `/var/lib/ultralove-shopify-deploy/failed` and not
 retried until `main` moves on; read `journalctl -u ultralove-shopify-deploy`.
 Automatic deploys and `ops/deploy-lab.sh` share a lock on the lab, so they never
 provision at the same time. A manual deploy of an older commit stays until the
-next merge, because the timer only acts when `main` changes.
+next merge, because the timer only acts when `main` changes. The Settings
+switch for automatic updates turns off the daily run only; Check now still
+checks and deploys.
 
 ### Inventory deployment verification, 2026-10-09
 
