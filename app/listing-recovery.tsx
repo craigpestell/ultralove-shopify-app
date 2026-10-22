@@ -3,11 +3,13 @@ import { Form, useSubmit } from "react-router";
 import type { importScreen } from "./imports.server";
 import { selectedPage } from "./workspace-policy";
 import { supplierText } from "./catalog-policy";
+import { useNetworkState } from "./network-state";
 
 type Job = NonNullable<Awaited<ReturnType<typeof importScreen>>["job"]>;
 
 export default function ListingRecovery({ job, busy, onPreview }: { job: Job; busy: boolean; onPreview: () => void }) {
   const submit = useSubmit();
+  const { pending } = useNetworkState();
   const [connections, setConnections] = useState(job.listingPolicy.links);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -34,6 +36,7 @@ export default function ListingRecovery({ job, busy, onPreview }: { job: Job; bu
       submit(form, { method: "post" });
     }}>
       <input type="hidden" name="intent" value="preview" />
+      <input type="hidden" name="recovery" value="connections" />
       <input type="hidden" name="ids" value={JSON.stringify(job.items.map((item) => item.supplierId))} />
       <input type="hidden" name="markup" value={job.markup} />
       <input type="hidden" name="markups" value={JSON.stringify(job.markups)} />
@@ -41,7 +44,7 @@ export default function ListingRecovery({ job, busy, onPreview }: { job: Job; bu
         job.items.filter((item) => item.fulfillmentMode === "DROPSHIPPING").map((item) => [item.supplierId, item.fulfillmentMode])))} />
       {job.active && <input type="hidden" name="active" value="yes" />}
       {job.publicationId && <input type="hidden" name="publish" value="yes" />}
-      <s-button type="submit" variant="primary" disabled={busy} loading={busy}>Validate connections and create fresh review</s-button>
+      <s-button type="submit" variant="primary" disabled={busy} loading={pending({ intent: "preview", fields: { recovery: "connections" } })}>Validate connections and create fresh review</s-button>
       <small>This creates a fresh review for all {job.items.length} snapshot products. Search and pages do not discard connection edits.</small>
       <div className="catalog-filters" role="search" aria-label="Search product connections">
         <label>Search connection products

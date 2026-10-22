@@ -1,9 +1,10 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
-import { Link, useBeforeUnload, useLocation } from "react-router";
+import { useBeforeUnload, useLocation } from "react-router";
 import { restoreDraft, signature, workspaceHref } from "./workspace-policy";
 import type { Configuration, Draft } from "./workspace-policy";
 import { defaultListingPolicy } from "./listing-policy";
+import { PendingLink } from "./network-state";
 
 type Workspace = { draft: Draft; setDraft: Dispatch<SetStateAction<Draft>>; storageAvailable: boolean };
 const Context = createContext<Workspace | null>(null);
@@ -58,8 +59,8 @@ export function WorkspaceNav({ current }: { current: string }) {
     {[
       ["catalog", "Catalog"], ["selection", `Selection & pricing (${draft.selected.length})`],
       ["imports", "Imports"], ["inventory", "Inventory"],
-    ].map(([view, label]) => <Link key={view} aria-current={current === view || (current === "review" && view === "selection") ? "page" : undefined}
-      to={workspaceHref(search, view, draft.browse)}>{label}</Link>)}
+    ].map(([view, label]) => <PendingLink key={view} aria-current={current === view || (current === "review" && view === "selection") ? "page" : undefined}
+      to={workspaceHref(search, view, draft.browse)} pendingLabel={`Loading ${label}`}>{label}</PendingLink>)}
     <span className="workspace-lab">Integration lab · CAD</span>
   </nav>;
 }

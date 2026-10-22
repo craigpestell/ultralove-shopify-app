@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Form, Link, useRevalidator } from "react-router";
+import { Form, useRevalidator } from "react-router";
 import type { importScreen } from "./imports.server";
 import { MAX_PREVIEW_AGE } from "./import-engine";
 import { supplierText } from "./catalog-policy";
@@ -11,6 +11,7 @@ import type { ListingPolicy } from "./listing-policy";
 import ListingRecovery from "./listing-recovery";
 import { fulfillmentLabel, fulfillmentSignature } from "./fulfillment-policy";
 import type { FulfillmentModes } from "./fulfillment-policy";
+import { PendingLink, RequestFeedback, useNetworkState } from "./network-state";
 
 type Screen = Awaited<ReturnType<typeof importScreen>>;
 const timestamp = (value: string) => new Date(value).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" });
@@ -24,6 +25,8 @@ export default function ImportResults({ job, history, ids, markup, markups, fulf
     onRecoveryPreview?: () => void;
   }) {
   const revalidator = useRevalidator();
+  const { pending } = useNetworkState();
+  const confirming = pending({ intent: ["queue", "retry"] });
   const [now, setNow] = useState(() => Date.now());
   const [attentionOnly, setAttentionOnly] = useState(false);
   const [browse, setBrowse] = useState({ jobId: job?.id, search: "", page: 1 });
@@ -62,7 +65,7 @@ export default function ImportResults({ job, history, ids, markup, markups, fulf
   return <div className="imports-layout">
     {job ? <section className="workspace-panel" aria-labelledby="job-heading">
       <div className="catalog-toolbar"><h2 id="job-heading">{job.status === "PREVIEW" ? "Pricing snapshot" : "Import results"}</h2>
-        <Link to={selectionHref}>{job.status === "PREVIEW" ? "Edit selection & pricing" : "Return to selection"}</Link></div>
+        <PendingLink to={selectionHref}>{job.status === "PREVIEW" ? "Edit selection & pricing" : "Return to selection"}</PendingLink></div>
       <div className={`job-summary ${job.status === "FAILED" ? "needs-attention" : ""}`} role="status" aria-live="polite">
         <strong>{statusLabel(job.status)}</strong>
         <span>{job.status === "PREVIEW" ? `${job.items.length} products to review` : `${completed} of ${job.items.length} products completed`}</span>
@@ -72,11 +75,11 @@ export default function ImportResults({ job, history, ids, markup, markups, fulf
         <p><small>Snapshot default markup</small><strong>{job.markup}%{Object.keys(job.markups).length > 0 ? ` · ${Object.keys(job.markups).length} overrides` : ""}</strong></p>
         <p><small>Existing listings</small><strong>{job.listingPolicy.mode === "UPDATE" ? "Update selected fields" : "Keep unchanged"}</strong></p></div>
       {(expired || changed) && <s-banner heading="Create a fresh preview" tone="warning">
-        {expired ? "This pricing preview has expired." : "Your selection, pricing, or import choices have changed."} <Link to={selectionHref}>Return to selection & pricing</Link> to create a new snapshot.
+        {expired ? "This pricing preview has expired." : "Your selection, pricing, or import choices have changed."} <PendingLink to={selectionHref}>Return to selection & pricing</PendingLink> to create a new snapshot.
       </s-banner>}
       {job.error && <div role="alert"><s-banner heading="Import needs attention" tone="critical">{job.error}</s-banner></div>}
       {job.status === "COMPLETE" && <s-banner heading="Import completed" tone="success">
-        Review each product below. Catalog-only stock is managed by you; supplier sync is available only for dropshipping products and remains opt-in. <Link to={inventoryHref}>Manage inventory</Link> or <Link to={catalogHref}>select more products</Link>.
+        Review each product below. Catalog-only stock is managed by you; supplier sync is available only for dropshipping products and remains opt-in. <PendingLink to={inventoryHref}>Manage inventory</PendingLink> or <PendingLink to={catalogHref}>select more products</PendingLink>.
       </s-banner>}
       {job.status === "PREVIEW" && replacements > 0 && <s-banner heading="Review replacements" tone="warning">
         {replacements} previously linked product{replacements === 1 ? " is" : "s are"} confirmed missing. Confirmation will create replacements with new product and variant IDs, using this snapshot&apos;s prices and new-product visibility. Previous retailer edits and collection membership are not restored.
@@ -93,10 +96,11 @@ export default function ImportResults({ job, history, ids, markup, markups, fulf
           <small>Applies to all {job.items.length} products in this snapshot, not just the visible page or search results.</small>
           {replacements > 0 && <small>This confirmation also authorizes the {replacements} reviewed replacement{replacements === 1 ? "" : "s"}.</small>}
           {job.status === "FAILED" && <small>Retries reconcile unfinished items only, using this snapshot. Uncertain creations require review, never blind recreation.</small>}</div>
-        <s-button type="submit" variant="primary" disabled={busy || expired || changed || blocked} loading={busy}>
+        <s-button type="submit" variant="primary" disabled={busy || expired || changed || blocked} loading={confirming}>
           {job.status === "FAILED" ? "Retry unfinished items" : job.items.some((item) => ["UPDATE", "LINK", "RECREATE"].includes(item.listing.action)) ?
             "Apply reviewed changes" : `Import ${job.items.length} product${job.items.length === 1 ? "" : "s"}`}
         </s-button>
+        <RequestFeedback pending={confirming} pendingMessage={job.status === "FAILED" ? "Queueing unfinished items for retry." : "Queueing your import. Results appear here as products are processed."} />
       </Form>}
       <div className="catalog-filters" role="search" aria-label="Search pricing snapshot">
         <label>Search snapshot products
@@ -155,14 +159,14 @@ export default function ImportResults({ job, history, ids, markup, markups, fulf
       </nav>
       {(job.status === "PREVIEW" || job.status === "FAILED") && <ListingRecovery key={job.id} job={job} busy={busy} onPreview={onRecoveryPreview} />}
       <details className="job-details"><summary>Job details</summary><p>Reference: {job.id}</p><p>Created {timestamp(job.createdAt)}. Publishing waits for ready images. Pricing and selected updates are fixed for this job. Visibility choices apply only to new products.</p></details>
-    </section> : mode === "review" ? <section className="workspace-panel workspace-empty"><h2>No snapshot to review</h2><p>Choose your products and pricing first. Nothing imports without confirmation.</p><Link className="workspace-primary" to={selectionHref}>Review selection & pricing</Link></section> : null}
+    </section> : mode === "review" ? <section className="workspace-panel workspace-empty"><h2>No snapshot to review</h2><p>Choose your products and pricing first. Nothing imports without confirmation.</p><PendingLink className="workspace-primary" to={selectionHref}>Review selection & pricing</PendingLink></section> : null}
     {mode === "imports" && <section className="workspace-panel" aria-labelledby="history-heading">
       <div className="catalog-toolbar"><h2 id="history-heading">Recent activity</h2><span>Latest 10 previews and imports</span></div>
       {history.length ? <ul className="job-history">{history.map((entry) => <li key={entry.id} className={job?.id === entry.id ? "is-selected" : undefined}>
-        <Link to={jobHref(entry.id)}><strong>{entry.total} product{entry.total === 1 ? "" : "s"} · {statusLabel(entry.status)}</strong>
-          <small>{timestamp(entry.createdAt)} · {entry.status === "PREVIEW" ? "Review before importing" : `${entry.completed}/${entry.total} completed`} · {entry.markup}% default markup</small></Link>
+        <PendingLink to={jobHref(entry.id)}><strong>{entry.total} product{entry.total === 1 ? "" : "s"} · {statusLabel(entry.status)}</strong>
+          <small>{timestamp(entry.createdAt)} · {entry.status === "PREVIEW" ? "Review before importing" : `${entry.completed}/${entry.total} completed`} · {entry.markup}% default markup</small></PendingLink>
         <span aria-hidden="true">View</span>
-      </li>)}</ul> : <div className="workspace-empty"><h2>Your imports will appear here</h2><p>Start by selecting supplier products. You’ll review exact prices before importing.</p><Link className="workspace-primary" to={catalogHref}>Browse catalog</Link></div>}
+      </li>)}</ul> : <div className="workspace-empty"><h2>Your imports will appear here</h2><p>Start by selecting supplier products. You’ll review exact prices before importing.</p><PendingLink className="workspace-primary" to={catalogHref}>Browse catalog</PendingLink></div>}
     </section>}
   </div>;
 }

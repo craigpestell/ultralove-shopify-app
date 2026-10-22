@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { data, Form, Link, useActionData, useLoaderData, useLocation, useNavigation, useRevalidator, useRouteError } from "react-router";
+import { data, Form, useActionData, useLoaderData, useLocation, useRevalidator, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticateLabAdmin } from "../shopify.server";
 import { enableAllInventory, inventoryControl, inventoryScreen } from "../inventory.server";
@@ -10,6 +10,7 @@ import { useWorkspace, WorkspaceNav } from "../workspace";
 import { statusLabel, workspaceHref } from "../workspace-policy";
 import { fulfillmentLabel } from "../fulfillment-policy";
 import InventoryRecovery from "../inventory-recovery";
+import { PendingLink, RequestFeedback, useNetworkState } from "../network-state";
 import "../catalog.css";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -49,13 +50,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 export default function Inventory() {
   const { products } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
-  const navigation = useNavigation();
   const revalidator = useRevalidator();
   const { draft } = useWorkspace();
   const location = useLocation();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState(() => new URLSearchParams(location.search).get("filter") === "deleted" ? "deleted" : "all");
-  const busy = navigation.state !== "idle";
+  const { busy, pending } = useNetworkState();
+  const enablingAll = pending({ intent: "enable-all" });
+  const rowPending = (intent: string, supplierId: number) => pending({ intent, fields: { supplierId: String(supplierId) } });
   useEffect(() => {
     if (!products.length) return;
     const timer = setInterval(() => { if (revalidator.state === "idle") revalidator.revalidate(); }, 10000);
@@ -77,7 +79,7 @@ export default function Inventory() {
       <div className="catalog-browser workspace">
         <WorkspaceNav current="inventory" />
         <header className="workspace-header"><div><h1>Inventory</h1><p>Manage your own stock for catalog-only products. Opt into supplier sync only for dropshipping products.</p></div>
-          <Link to={catalogHref}>Add products from catalog</Link></header>
+          <PendingLink to={catalogHref}>Add products from catalog</PendingLink></header>
         <div className="inventory-overview" aria-label="Inventory overview">
           <button type="button" aria-pressed={filter === "all"} onClick={() => setFilter("all")}><strong>{currentProducts.length}</strong> Current imported products</button>
           <button type="button" aria-pressed={filter === "enabled"} onClick={() => setFilter("enabled")}><strong>{enabled}</strong> Sync on</button>
@@ -94,8 +96,8 @@ export default function Inventory() {
             <label className="checkbox-label"><span><input type="checkbox" name="confirm" value="inventory-all-current" required disabled={busy} />
               I approve inventory-only sync for all currently imported eligible products. Prices and publication stay unchanged.</span></label>
             <s-button type="submit" variant="primary" disabled={busy || eligible.every((product) => product.enabled)}
-              loading={busy && navigation.formData?.get("intent") === "enable-all"}>Enable inventory sync for all</s-button>
-            {busy && navigation.formData?.get("intent") === "enable-all" && <p role="status">Verifying all imported listings and enabling eligible products. This can take a moment for a large catalog.</p>}
+              loading={enablingAll}>Enable inventory sync for all</s-button>
+            <RequestFeedback pending={enablingAll} pendingMessage="Verifying all imported listings and enabling eligible products. This can take a moment for a large catalog." />
           </Form>
           {result?.bulk && <div role="status">
             <p>{result.bulk.enabled} products enabled; {result.bulk.alreadyEnabled} already enabled; {result.bulk.blocked.length} skipped out of {result.bulk.total} imported products.</p>
@@ -125,9 +127,9 @@ export default function Inventory() {
             Pausing any participant prevents replay until the participating products are verified and resumed.
             Products with a protected correction are not resumed by Enable all.</p>
         </details>
-        {result?.error && <p role="alert">{result.error}</p>}
-        {result?.intent && result.intent !== "enable-all" && <p role="status">{result.intent === "pause" ? "Sync paused" : result.intent === "enable" ? "Inventory sync enabled" : "Inventory update queued"} for {supplierText(products.find((product) => product.supplierId === result.supplierId)?.name || "this product")}.</p>}
-        {!products.length && <div className="workspace-empty"><h2>No imported products yet</h2><p>Import products before enabling inventory synchronization.</p><Link className="workspace-primary" to={catalogHref}>Browse catalog</Link></div>}
+        <RequestFeedback error={result?.error} errorHeading="Inventory change could not be completed"
+          success={result?.intent && result.intent !== "enable-all" && !busy ? `${result.intent === "pause" ? "Sync paused" : result.intent === "enable" ? "Inventory sync enabled" : "Inventory update queued"} for ${supplierText(products.find((product) => product.supplierId === result.supplierId)?.name || "this product")}.` : undefined} />
+        {!products.length && <div className="workspace-empty"><h2>No imported products yet</h2><p>Import products before enabling inventory synchronization.</p><PendingLink className="workspace-primary" to={catalogHref}>Browse catalog</PendingLink></div>}
         {products.length > 0 && !visible.length && <div className="workspace-empty">
           {!currentProducts.length && filter !== "deleted" ? <>
             <h2>No current imported products</h2><p>Deleted listings are retained in the archive, not active inventory.</p>
@@ -157,11 +159,13 @@ export default function Inventory() {
                   <p>Update supplier-backed stock about every five minutes. Prices and publication stay unchanged.</p>
                   <label className="checkbox-label"><span><input type="checkbox" name="confirm" value="inventory-only" required disabled={busy} />
                     I approve inventory-only sync for {supplierText(product.name)}.</span></label>
-                  <s-button type="submit" disabled={busy} loading={busy && navigation.formData?.get("supplierId") === String(product.supplierId)}>Enable inventory sync</s-button>
+                  <s-button type="submit" disabled={busy} loading={rowPending("enable", product.supplierId)}>Enable inventory sync</s-button>
                 </details>
               </> : <>
-                <div className="inventory-actions"><button type="submit" name="intent" value="pause" disabled={busy}>Pause sync</button>
-                {product.fulfillmentMode === "DROPSHIPPING" && <button type="submit" name="intent" value="sync-now" disabled={busy || product.status === "RUNNING"}>Sync now</button>}</div>
+                <div className="inventory-actions"><button type="submit" name="intent" value="pause" disabled={busy} aria-busy={rowPending("pause", product.supplierId) || undefined}>
+                  {rowPending("pause", product.supplierId) && <s-spinner size="base" accessibilityLabel="Pausing sync" />}Pause sync</button>
+                {product.fulfillmentMode === "DROPSHIPPING" && <button type="submit" name="intent" value="sync-now" disabled={busy || product.status === "RUNNING"} aria-busy={rowPending("sync-now", product.supplierId) || undefined}>
+                  {rowPending("sync-now", product.supplierId) && <s-spinner size="base" accessibilityLabel="Queueing sync" />}Sync now</button>}</div>
               </>}
             </Form>}</td>
           </tr>)}</tbody>
