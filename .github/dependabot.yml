@@ -53,6 +53,16 @@ updates:
       - dependency-name: '@react-router/serve'
         versions: ['>7.18.2']
 
+      # Prisma 7 can't be installed yet: the latest
+      # @shopify/shopify-app-session-storage-prisma (11.0.1) peers on
+      # prisma/@prisma/client ^6.19, so npm ci fails with ERESOLVE (PR #12).
+      # Prisma 7 also needs a prisma.config.ts and a SQLite driver adapter.
+      # Lift this once the session storage package supports Prisma 7.
+      - dependency-name: 'prisma'
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@prisma/client'
+        update-types: ['version-update:semver-major']
+
     groups:
 
       # Group together PRs of dependant packages
