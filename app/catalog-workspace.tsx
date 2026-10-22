@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Form, useActionData, useFetcher, useLoaderData, useLocation, useSubmit } from "react-router";
 import type { action, loader } from "./routes/app._index";
 import type { loader as detailsLoader } from "./routes/app.selection-details";
@@ -40,11 +40,18 @@ export default function CatalogWorkspace() {
   const view = ["catalog", "selection", "review", "imports"].includes(requestedView) ? requestedView : "catalog";
   const heading = useRef<HTMLHeadingElement>(null);
   const previousView = useRef(view);
+  // Catalog-only filter: page through the current selection instead of UltraLove's feed.
+  const [selectedOnly, setSelectedOnly] = useState(false);
+  const [selectedOnlySearch, setSelectedOnlySearch] = useState("");
+  const [selectedOnlyPage, setSelectedOnlyPage] = useState(1);
+  const [removed, setRemoved] = useState<{ ids: number[]; label: string } | null>(null);
+  const showSelected = view === "catalog" && selectedOnly;
   const details = useFetcher<typeof detailsLoader>();
   const fetchDetails = details.load;
   const detailsPending = useRef(false);
   const missingDetails = ids.filter((id) => !draft.products[id]);
   const selection = selectedPage(ids, draft.products, draft.selectionSearch, draft.selectionPage);
+  const selectedRows = selectedPage(ids, draft.products, selectedOnlySearch, selectedOnlyPage);
   const loadDetails = useCallback(() => {
     const missing = draft.selected.filter((id) => !draft.products[id]).slice(0, CATALOG_BATCH_SIZE);
     if (!missing.length) return;
@@ -69,8 +76,8 @@ export default function CatalogWorkspace() {
         ...Object.fromEntries(response.products.map((product) => [product.id, product])) } }));
       return;
     }
-    if (view === "selection" && !details.data?.error) loadDetails();
-  }, [details.state, details.data, view, loadDetails, setDraft]);
+    if ((view === "selection" || showSelected) && !details.data?.error) loadDetails();
+  }, [details.state, details.data, view, showSelected, loadDetails, setDraft]);
   useEffect(() => {
     setDraft((current) => {
       const known = { ...current.products };
@@ -103,7 +110,7 @@ export default function CatalogWorkspace() {
     return `/app?${next}`;
   };
   const viewHref = (next: string, jobId?: string) => workspaceHref(location.search, next, draft.browse, jobId);
-  const pageIds = products?.products.map((product) => product.id) || [];
+  const pageIds = showSelected ? selectedRows.ids : products?.products.map((product) => product.id) || [];
   const selectedOnPage = pageIds.filter((id) => ids.includes(id)).length;
   const allOnPageSelected = pageIds.length > 0 && selectedOnPage === pageIds.length;
   const offPage = ids.filter((id) => !pageIds.includes(id));
@@ -115,6 +122,22 @@ export default function CatalogWorkspace() {
       links: Object.fromEntries(Object.entries(current.listingPolicy.links).filter(([id]) => nextIds.includes(Number(id)))),
       recreate: current.listingPolicy.recreate.filter((id) => nextIds.includes(id)) },
   }));
+  // Unselecting from the selected-only list hides the row, so keep one step of undo.
+  const unselect = (removedIds: number[], label: string) => {
+    if (!removedIds.length) return;
+    select(ids.filter((id) => !removedIds.includes(id)));
+    setRemoved({ ids: removedIds, label });
+  };
+  const undoRemove = () => {
+    if (!removed) return;
+    select([...ids, ...removed.ids.filter((id) => !ids.includes(id))]);
+    setRemoved(null);
+  };
+  const showProducts = (only: boolean) => {
+    setSelectedOnly(only);
+    setRemoved(null);
+    setSelectedOnlyPage(1);
+  };
   const overrideField = (id: number, name: string) => <label><span>Markup (%)</span>
     <input type="number" min="0" max="1000" step="0.01" inputMode="decimal" autoComplete="off"
       aria-label={`Markup override for ${name} (%)`} aria-describedby="markup-help"
@@ -166,6 +189,61 @@ export default function CatalogWorkspace() {
         {draft.publish && <input type="hidden" name="publish" value="yes" />}
       </Form>}
       {view === "catalog" && <section className="workspace-panel" aria-label="Browse supplier products">
+        <div className="catalog-show" role="group" aria-label="Show products">
+          <button type="button" aria-pressed={!selectedOnly} onClick={() => showProducts(false)}>All products</button>
+          <button type="button" aria-pressed={selectedOnly} onClick={() => showProducts(true)}>Selected only ({ids.length})</button>
+        </div>
+        {showSelected ? <>
+          {!!ids.length && <div className="catalog-filters" role="search" aria-label="Search selected products">
+            <label>Search selected products
+              <input type="search" maxLength={100} placeholder="Product name, SKU or ID" value={selectedOnlySearch} autoComplete="off"
+                onChange={(event) => { setSelectedOnlySearch(event.currentTarget.value); setSelectedOnlyPage(1); }} />
+            </label>
+            <s-button disabled={!selectedOnlySearch} onClick={() => { setSelectedOnlySearch(""); setSelectedOnlyPage(1); }}>Clear search</s-button>
+            <s-button tone="critical" disabled={busy || !ids.length} onClick={() => unselect(ids, `${ids.length} products`)}>Unselect all {ids.length}</s-button>
+          </div>}
+          {removed && <div role="status" className="catalog-undo">
+            <span>Unselected {removed.label}.</span>
+            <s-button disabled={busy} onClick={undoRemove}>Undo</s-button>
+          </div>}
+          {!!missingDetails.length && <p role="status">{details.data?.error
+            ? `${missingDetails.length} selected products are missing details. They are listed by ID.`
+            : `Loading details for ${missingDetails.length} selected products.`}</p>}
+          {!!missingDetails.length && details.data?.error && <div role="alert"><s-banner heading="Selected product details unavailable" tone="warning">
+            {details.data.error} Your selections are unchanged.
+            <s-button disabled={details.state !== "idle"} onClick={loadDetails}>Retry details</s-button>
+          </s-banner></div>}
+          {!ids.length ? <div className="workspace-empty"><h2>No products selected</h2><p>Select products in the catalog to see them here.</p>
+            <s-button onClick={() => showProducts(false)}>Show all products</s-button></div> : <>
+            <div className="catalog-toolbar"><span>Showing {selectedRows.start}–{selectedRows.end} of {selectedRows.total} {selectedOnlySearch.trim() ? `matching products (${ids.length} selected)` : "selected products"} · CAD</span></div>
+            {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+            <div className="catalog-table" tabIndex={0} role="region" aria-label="Selected products">
+              <table>
+                <caption className="visually-hidden">Selected UltraLove products with wholesale prices and estimated retail prices in CAD. Uncheck a product to remove it from your selection.</caption>
+                <thead><tr><th scope="col"><span className="checkbox-label"><input type="checkbox" aria-label="Unselect all on this page" checked={pageIds.length > 0}
+                  disabled={busy || !pageIds.length} onChange={() => unselect(pageIds, `${pageIds.length} products on this page`)} /></span></th>
+                  <th scope="col">Product</th><th scope="col">Wholesale</th><th scope="col">Est. retail</th><th scope="col">Action</th></tr></thead>
+                <tbody>{selectedRows.ids.map((id) => {
+                  const product = draft.products[id];
+                  const name = product ? supplierText(product.name) : `Supplier product #${id}`;
+                  return <tr key={id} className="is-selected">
+                    <td><input type="checkbox" aria-label={`Unselect ${name} (#${id})`} checked disabled={busy} onChange={() => unselect([id], name)} /></td>
+                    <td><div className="catalog-product"><div><strong>{name}</strong><small>{product ? `${product.sku || "Missing SKU — review required"} · ${product.type === "variable" ? "Multiple variants" : "Single variant"}` : "Loading details"}</small></div></div></td>
+                    <td>{!product ? "—" : product.price === null || product.price === "" ? "Price needs review" : `$${product.price}`}</td>
+                    <td><strong>{estimate(product?.price ?? null, id, product?.type ?? "")}</strong>{markups[id] !== undefined && <small>{markups[id]}% override</small>}</td>
+                    <td><button type="button" className="quiet-button" disabled={busy} aria-label={`Unselect ${name}`} onClick={() => unselect([id], name)}>Unselect</button></td>
+                  </tr>;
+                })}</tbody>
+              </table>
+            </div>
+            {!selectedRows.total && <div className="workspace-empty"><h2>No matching selected products</h2><p>Try a different name, SKU or product ID, or clear the search.</p></div>}
+            {selectedRows.pages > 1 && <nav className="catalog-pagination" aria-label="Selected products pages">
+              <s-button disabled={selectedRows.page === 1} onClick={() => setSelectedOnlyPage(selectedRows.page - 1)}>Previous</s-button>
+              <span>Page {selectedRows.page} of {selectedRows.pages}</span>
+              <s-button disabled={selectedRows.page === selectedRows.pages} onClick={() => setSelectedOnlyPage(selectedRows.page + 1)}>Next</s-button>
+            </nav>}
+          </>}
+        </> : <>
         <Form method="get" className="catalog-filters" role="search">
           {["shop", "host", "embedded"].filter((key) => params.has(key)).map((key) => <input key={key} type="hidden" name={key} value={params.get(key)!} />)}
           <input type="hidden" name="view" value="catalog" />
@@ -208,6 +286,7 @@ export default function CatalogWorkspace() {
         {products && !products.products.length && <div className="workspace-empty"><h2>No matching products</h2><p>Try another name or SKU. Your selections have not changed.</p><PendingLink to={href({ search: null, category_id: null, after_id: null })}>Clear filters</PendingLink></div>}
         <nav className="catalog-pagination" aria-label="Catalog pages"><PendingLink to={href({ after_id: null })}>First page</PendingLink>
           {products?.has_more && <PendingLink to={href({ after_id: String(products.next_after_id) })}>Next 50 products</PendingLink>}</nav>
+        </>}
       </section>}
       {view === "selection" && <div className="selection-layout">
         <section className="workspace-panel selection-list" aria-labelledby="selected-heading">
@@ -300,7 +379,7 @@ export default function CatalogWorkspace() {
         </aside>
       </div>}
       {(view === "catalog" || view === "selection") && <div className="selection-bar">
-        <div role="status" aria-live="polite"><strong>{ids.length} selected</strong><small>{dirty ? "Unsaved to store" : "Saved to store"}{storageAvailable ? " · Draft kept in this tab" : ""}{view === "catalog" && offPage.length ? ` · ${offPage.length} outside this page` : ""}</small></div>
+        <div role="status" aria-live="polite"><strong>{ids.length} selected</strong><small>{dirty ? "Unsaved to store" : "Saved to store"}{storageAvailable ? " · Draft kept in this tab" : ""}{view === "catalog" && !showSelected && offPage.length ? ` · ${offPage.length} outside this page` : ""}</small></div>
         <div className="catalog-actions">
           <s-button disabled={busy || !dirty} onClick={save} loading={saving}>Save changes</s-button>
           <details className="selection-reset"><summary>Reset</summary><s-button disabled={busy || !dirty} onClick={() => setDraft((current) => ({ ...current, selected, markup: savedMarkup, markups: savedMarkups, fulfillmentModes: savedModes }))}>Restore saved selection and markup</s-button></details>
