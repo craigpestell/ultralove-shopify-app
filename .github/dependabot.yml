@@ -79,7 +79,6 @@ updates:
       vite:
         patterns:
           - 'vite'
-          - 'vite-tsconfig-paths'
       react-router:
         patterns:
           - '@react-router/dev'
