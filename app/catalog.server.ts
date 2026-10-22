@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { CATALOG_BATCH_SIZE, selectionIds } from "./catalog-policy.ts";
+import { CATALOG_BATCH_SIZE, selectionIds, supplierText } from "./catalog-policy.ts";
 import type { ProductSummary } from "./workspace-policy";
 
 export class CatalogError extends Error {
@@ -125,6 +125,30 @@ export async function categoriesPage(after: number, transport: Transport = sshTr
     return { id: Number(record.id), name: record.name };
   });
   return { categories, next_after_id: Number(data.next_after_id), has_more: Boolean(data.has_more) };
+}
+
+const CATEGORY_PAGE_LIMIT = 40;
+const CATEGORY_CACHE_MS = 5 * 60 * 1000;
+let categoryCache: { at: number; categories: Category[] } | null = null;
+
+/** Every supplier category, sorted by name. The feed pages by ID, so read every page before sorting. */
+export async function allCategories(transport: Transport = sshTransport): Promise<{ categories: Category[] }> {
+  const cached = transport === sshTransport && categoryCache && Date.now() - categoryCache.at < CATEGORY_CACHE_MS;
+  if (cached) return { categories: categoryCache!.categories };
+  const categories: Category[] = [];
+  let after = 0;
+  for (let page = 0; ; page++) {
+    if (page === CATEGORY_PAGE_LIMIT) throw new CatalogError("Supplier category list exceeded its limit.");
+    const result = await categoriesPage(after, transport);
+    categories.push(...result.categories);
+    if (!result.has_more) break;
+    if (result.next_after_id <= after) throw new CatalogError("Supplier catalog returned invalid pagination.");
+    after = result.next_after_id;
+  }
+  const collator = new Intl.Collator("en", { sensitivity: "base", numeric: true });
+  categories.sort((a, b) => collator.compare(supplierText(a.name).trim(), supplierText(b.name).trim()) || a.id - b.id);
+  if (transport === sshTransport) categoryCache = { at: Date.now(), categories };
+  return { categories };
 }
 
 export async function validateSelection(ids: number[], transport: Transport = sshTransport): Promise<void> {

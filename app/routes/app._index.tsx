@@ -4,7 +4,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticateLabAdmin } from "../shopify.server";
 import db from "../db.server";
 import { browseFilters, selectionIds } from "../catalog-policy";
-import { categoriesPage, CatalogError, productsPage, validateSelection } from "../catalog.server";
+import { allCategories, CatalogError, productsPage, validateSelection } from "../catalog.server";
 import { ImportError, importChoices, markupPercent } from "../import-engine";
 import { createPreview, importScreen, queueJob } from "../imports.server";
 import { markupOverrides, PricingError } from "../pricing-policy";
@@ -25,13 +25,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     if (!(error instanceof Error)) throw error;
     throw new Response(error.message, { status: 400 });
   }
-  const { categoryAfter, ...productFilters } = filters;
+  // Categories load in full and sorted, so the legacy category_after cursor is ignored.
+  const productFilters = { search: filters.search, category_id: filters.category_id, after_id: filters.after_id };
   const screen = await importScreen(session.shop, jobs[0] || null);
   if (["review", "imports"].includes(url.searchParams.get("view") || "") || (!url.searchParams.has("view") && jobs.length)) {
     return { shop: session.shop, ...screen, filters, products: null, categories: null, error: null };
   }
   try {
-    const [products, categories] = await Promise.all([productsPage(productFilters), categoriesPage(categoryAfter)]);
+    const [products, categories] = await Promise.all([productsPage(productFilters), allCategories()]);
     return { shop: session.shop, ...screen, filters, products, categories, error: null };
   } catch (error) {
     if (!(error instanceof CatalogError)) throw error;

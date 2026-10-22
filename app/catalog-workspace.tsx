@@ -249,7 +249,7 @@ export default function CatalogWorkspace() {
           <input type="hidden" name="view" value="catalog" />
           <label>Search name or SKU <input name="search" defaultValue={filters.search || ""} key={filters.search || ""} maxLength={100} autoComplete="off" /></label>
           <label>Category
-            <select name="category_id" defaultValue={filters.category_id || 0} key={`${filters.category_id}-${filters.categoryAfter}`}>
+            <select name="category_id" defaultValue={filters.category_id || 0} key={filters.category_id}>
               <option value="0">All categories</option>
               {filters.category_id && !categories?.categories.some((category) => category.id === filters.category_id) && <option value={filters.category_id}>Selected category #{filters.category_id}</option>}
               {categories?.categories.map((category) => <option key={category.id} value={category.id}>{supplierText(category.name)}</option>)}
@@ -260,7 +260,7 @@ export default function CatalogWorkspace() {
         </Form>
         <div className="catalog-toolbar"><span>{products?.products.length ?? 0} products on this page · CAD</span>
           <PendingLink to={viewHref("selection")}>Retail estimates at {markup}% default markup</PendingLink>
-          {categories?.has_more && <PendingLink to={href({ category_after: String(categories.next_after_id) })}>More categories</PendingLink>}</div>
+</div>
         {/* A focusable region lets keyboard users scroll wide catalog tables. */}
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
         <div className="catalog-table" tabIndex={0} role="region" aria-label="UltraLove's catalog">
