@@ -4,7 +4,7 @@ import db from "./db.server";
 import { CATALOG_BATCH_SIZE, selectionIds } from "./catalog-policy";
 import { importPlan, validateSelection } from "./catalog.server";
 import { assertLabShop } from "./lab-policy.server";
-import { ImportError, MAX_PREVIEW_AGE, catalogOnlyPayload, importConfirmation, importDraft, importSettings, markupPercent, matchProduct, onlineStorePublication, ownedProduct, payload, plannedFeed, priceRange, remoteCatalog, reviewLabels, shopContext } from "./import-engine";
+import { DROPSHIPPING_DEFINITION, DROPSHIPPING_DEFINITION_MUTATION, DROPSHIPPING_KEY, DROPSHIPPING_MUTATION, DROPSHIPPING_NAMESPACE, ImportError, MAX_PREVIEW_AGE, catalogOnlyPayload, importConfirmation, importDraft, importSettings, markupPercent, matchProduct, onlineStorePublication, ownedProduct, payload, plannedFeed, priceRange, remoteCatalog, reviewLabels, shopContext } from "./import-engine";
 import type { GraphQL } from "./import-engine";
 import { markupOverrides, retailPrice } from "./pricing-policy";
 import type { MarkupOverrides } from "./pricing-policy";
@@ -264,6 +264,8 @@ export async function runJob(id: string, shop: string, api: GraphQL, stopping: (
     }
     await validateSelection(ids);
     const products = await remoteCatalog(api);
+    // Already-defined is a userError here, so the result is not checked.
+    await api(DROPSHIPPING_DEFINITION_MUTATION, { definition: DROPSHIPPING_DEFINITION }).catch(() => null);
     for (const item of job.items) {
       if (stopping()) return;
       if (completed.includes(item.status)) continue;
@@ -445,6 +447,10 @@ export async function runJob(id: string, shop: string, api: GraphQL, stopping: (
           });
           await transaction.importItem.update({ where: { jobId_supplierId: { jobId: id, supplierId: item.supplierId } }, data: { ...result, error: null } });
         });
+        // Best effort: the import is already recorded, and the next import rewrites the flag.
+        await api(DROPSHIPPING_MUTATION, { metafields: [{ ownerId: result.productId, namespace: DROPSHIPPING_NAMESPACE,
+          key: DROPSHIPPING_KEY, type: "boolean", value: String(mode === "DROPSHIPPING") }] })
+          .catch(() => console.error("Dropshipping flag write failed.", id, item.supplierId));
       } catch (error) {
         console.error("Draft import item failed.", id, item.supplierId, error instanceof Error ? error.message : "Unknown failure");
         await db.importItem.update({ where: { jobId_supplierId: { jobId: id, supplierId: item.supplierId } },

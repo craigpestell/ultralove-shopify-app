@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createServer } from "vite";
-import { CATALOG_QUERY, CONTEXT_QUERY, CREATE_MUTATION, VERIFY_QUERY, MAX_PREVIEW_AGE } from "../app/import-engine.ts";
+import { CATALOG_QUERY, CONTEXT_QUERY, CREATE_MUTATION, DROPSHIPPING_DEFINITION_MUTATION, DROPSHIPPING_MUTATION, VERIFY_QUERY, MAX_PREVIEW_AGE } from "../app/import-engine.ts";
 import { defaultListingPolicy } from "../app/listing-policy.ts";
 import { LISTING_METADATA_MUTATION, LISTING_PRICES_MUTATION, LISTING_QUERY } from "../app/listing-engine.ts";
 import { listingApi, retailerListing, supplierInput, location } from "./fixtures/listing-fixture.mjs";
@@ -49,7 +49,13 @@ test("Prisma listing previews/worker persist approvals, recover missing mappings
     let listingFailure = null;
     let catalogHidden = false;
     let createdInput;
+    const flags = new Map();
     const api = async (query, variables) => {
+      if (query === DROPSHIPPING_DEFINITION_MUTATION) return { data: { metafieldDefinitionCreate: { userErrors: [] } } };
+      if (query === DROPSHIPPING_MUTATION) {
+        for (const field of variables.metafields) flags.set(field.ownerId, field.value);
+        return { data: { metafieldsSet: { userErrors: [] } } };
+      }
       if (query === LISTING_QUERY && listingFailure === "transport") throw new Error("Shopify lookup unavailable");
       if (query === LISTING_QUERY && listingFailure === "graphql") return { errors: [{ message: "Access denied" }] };
       if (query === CONTEXT_QUERY) return { data: {
@@ -141,6 +147,7 @@ test("Prisma listing previews/worker persist approvals, recover missing mappings
     await runJob(link.id, shop, api, () => false);
     const linked = (await importScreen(shop, link.id)).job;
     assert.equal(linked.items[0].status, "LINKED");
+    assert.equal(flags.get("gid://shopify/Product/2"), "false", "linked catalog-only listings are flagged false");
     assert.equal(mock.state.product.handle, "retailer-handle");
     assert.equal(mock.state.product.variants[0].price, "42.00");
     assert.equal((await inventoryScreen(shop))[0].productId, "gid://shopify/Product/2");

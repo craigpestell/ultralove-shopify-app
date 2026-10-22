@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { createServer } from "vite";
 import {
-  ACTIVATE_MUTATION, CATALOG_QUERY, CONTEXT_QUERY, CREATE_MUTATION,
+  ACTIVATE_MUTATION, CATALOG_QUERY, CONTEXT_QUERY, CREATE_MUTATION, DROPSHIPPING_DEFINITION_MUTATION, DROPSHIPPING_MUTATION,
   PUBLICATIONS_QUERY, PUBLICATION_STATE_QUERY, PUBLISH_MUTATION, VERIFY_QUERY,
 } from "../app/import-engine.ts";
 
@@ -63,7 +63,22 @@ test("published jobs persist opt-in settings and recover an uncertain publicatio
     let isPublished = false;
     let sentInput;
     const mutations = { create: 0, activate: 0, publish: 0 };
+    const flags = new Map();
+    const definitions = [];
+    let flagFailure = false;
+    const flagApi = (query, variables) => {
+      if (query === DROPSHIPPING_DEFINITION_MUTATION) {
+        definitions.push(variables.definition);
+        return { data: { metafieldDefinitionCreate: { createdDefinition: null, userErrors: [{ code: "TAKEN" }] } } };
+      }
+      if (query !== DROPSHIPPING_MUTATION) return null;
+      if (flagFailure) throw new Error("Simulated metafield outage");
+      for (const field of variables.metafields) flags.set(field.ownerId, field);
+      return { data: { metafieldsSet: { userErrors: [] } } };
+    };
     const api = async (query, variables) => {
+      const flagged = flagApi(query, variables);
+      if (flagged) return flagged;
       if (query === CONTEXT_QUERY) return { data: {
         shop: { myshopifyDomain: shop, currencyCode: "CAD" },
         locations: { nodes: [{ id: location, name: "Shop location", isActive: true, fulfillsOnlineOrders: true }], pageInfo: { hasNextPage: false } },
@@ -136,11 +151,17 @@ test("published jobs persist opt-in settings and recover an uncertain publicatio
     assert.equal(completed.job.items[0].productId, remote.id);
     assert.deepEqual(mutations, { create: 1, activate: 1, publish: 1 }, "retry must be read-only when activation/publication succeeded");
 
+    assert.deepEqual(flags.get(remote.id), { ownerId: remote.id, namespace: "ultralove", key: "dropshipping", type: "boolean", value: "true" });
+    assert.deepEqual(definitions.at(-1), { name: "Dropshipping", namespace: "ultralove", key: "dropshipping", type: "boolean", ownerType: "PRODUCT",
+      description: definitions.at(-1).description, access: { storefront: "PUBLIC_READ" } });
+
     const existing = structuredClone(remote);
+    flagFailure = true;
     const reuse = await createPreview(shop, "25", api, { active: true, publish: true });
     await queueJob(shop, reuse.id, false, "publish-online-store");
     await runJob(reuse.id, shop, api, () => false);
     assert.equal((await importScreen(shop, reuse.id)).job.items[0].status, "REUSED");
+    flagFailure = false;
     assert.deepEqual(remote, existing);
     assert.deepEqual(mutations, { create: 1, activate: 1, publish: 1 });
 
@@ -156,6 +177,8 @@ test("published jobs persist opt-in settings and recover an uncertain publicatio
     const imported = new Map();
     const inputs = [];
     const overrideApi = async (query, variables) => {
+      const flagged = flagApi(query, variables);
+      if (flagged) return flagged;
       if (query === CONTEXT_QUERY) return api(query, variables);
       if (query === CATALOG_QUERY) return { data: { products: { nodes: [...imported.values()], pageInfo: { hasNextPage: false } } } };
       if (query === CREATE_MUTATION) {
@@ -195,6 +218,8 @@ test("published jobs persist opt-in settings and recover an uncertain publicatio
     assert.equal(inputs[1].variants[0].inventoryQuantities[0].quantity, 0, "dropshipping quantities remain unchanged");
     assert.equal((await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId: 200 } } })).fulfillmentMode, "CATALOG");
     assert.equal((await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId: 300 } } })).fulfillmentMode, "DROPSHIPPING");
+    assert.equal(flags.get("gid://shopify/Product/200").value, "false", "catalog-only products are flagged false");
+    assert.equal(flags.get("gid://shopify/Product/300").value, "true", "dropshipping products are flagged true");
     assert.deepEqual((await db.importJob.findUniqueOrThrow({ where: { id: overrides.id }, include: { items: true } })).items
       .map((item) => item.payload), snapshot.items.map((item) => item.payload));
 

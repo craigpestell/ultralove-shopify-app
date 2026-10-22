@@ -207,6 +207,23 @@ export const PUBLISH_MUTATION = `mutation PublishImportedProduct($id:ID!,$input:
   publishablePublish(id:$id,input:$input) { userErrors { field message } }
 }`;
 
+// Product metafield ultralove.dropshipping (boolean): true when the product is
+// imported for dropshipping, false when it is listed from the catalog only.
+// Storefront-readable so themes and other apps can branch on it.
+export const DROPSHIPPING_NAMESPACE = "ultralove";
+export const DROPSHIPPING_KEY = "dropshipping";
+export const DROPSHIPPING_DEFINITION = {
+  name: "Dropshipping", namespace: DROPSHIPPING_NAMESPACE, key: DROPSHIPPING_KEY, type: "boolean", ownerType: "PRODUCT",
+  description: "True when UltraLove ships this product to the customer (dropshipping); false when it is listed from the catalog only.",
+  access: { storefront: "PUBLIC_READ" },
+};
+export const DROPSHIPPING_DEFINITION_MUTATION = `mutation DropshippingDefinition($definition:MetafieldDefinitionInput!) {
+  metafieldDefinitionCreate(definition:$definition) { createdDefinition { id } userErrors { field message code } }
+}`;
+export const DROPSHIPPING_MUTATION = `mutation ImportDropshipping($metafields:[MetafieldsSetInput!]!) {
+  metafieldsSet(metafields:$metafields) { userErrors { field message } }
+}`;
+
 async function request(api: GraphQL, query: string, variables: Record<string, unknown> = {}) {
   const response = object(await api(query, variables));
   if (response.errors !== undefined && list(response.errors).length) throw new ImportError("Shopify rejected the request. Retry after checking API access or rate limits.");
