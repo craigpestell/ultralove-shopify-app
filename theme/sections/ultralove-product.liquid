@@ -1,8 +1,9 @@
 {%- comment -%}
   Product detail for the lab storefront, used by templates/product.ultralove.json
-  (/products/<handle>?view=ultralove). One select per option picks the variant; the
-  price, SKU, stock and add-to-cart state follow the selected variant. Products with
-  only the default variant show no picker.
+  (/products/<handle>?view=ultralove). The gallery has a main image with arrows and
+  swipe, a thumbnail strip, and an enlarge dialog. One select per option picks the
+  variant; the price, SKU, stock, add-to-cart state and gallery image follow the
+  selected variant. Products with only the default variant show no picker.
 {%- endcomment -%}
 {%- liquid
   assign current = product.selected_or_first_available_variant
@@ -10,24 +11,54 @@
 -%}
 <div class="section page-width-normal">
 <div class="ul-product" data-ul-product>
-  <div class="ul-product__gallery">
-    {%- if product.media.size > 0 -%}
-      {%- for media in product.media -%}
-        {%- if media.preview_image -%}
+  {%- liquid
+    assign images = product.media | where: 'preview_image'
+    assign start_media = current.featured_media | default: product.featured_media
+  -%}
+  <div class="ul-gallery" data-ul-gallery>
+    <div class="ul-gallery__stage">
+      <ul class="ul-gallery__slides" role="list" data-ul-slides>
+        {%- for media in images -%}
           {%- liquid
             assign loading = 'lazy'
-            if forloop.first
+            if media.id == start_media.id
               assign loading = 'eager'
             endif
           -%}
-          <figure class="ul-product__media" data-media-id="{{ media.id }}">
+          <li class="ul-gallery__slide" data-media-id="{{ media.id }}" data-zoom="{{ media.preview_image | image_url: width: 2048 }}">
             {{ media.preview_image | image_url: width: 1024 | image_tag: loading: loading, sizes: '(min-width: 990px) 50vw, 100vw', alt: media.alt | default: product.title | escape }}
-          </figure>
-        {%- endif -%}
-      {%- endfor -%}
-    {%- else -%}
-      <figure class="ul-product__media">{{ 'product-1' | placeholder_svg_tag }}</figure>
+          </li>
+        {%- else -%}
+          <li class="ul-gallery__slide">{{ 'product-1' | placeholder_svg_tag }}</li>
+        {%- endfor -%}
+      </ul>
+      {%- if images.size > 1 -%}
+        <button type="button" class="ul-gallery__arrow ul-gallery__arrow--prev" data-ul-step="-1" aria-label="Previous image">&#8249;</button>
+        <button type="button" class="ul-gallery__arrow ul-gallery__arrow--next" data-ul-step="1" aria-label="Next image">&#8250;</button>
+      {%- endif -%}
+      {%- if images.size > 0 -%}
+        <button type="button" class="ul-gallery__zoom-button" data-ul-zoom-open aria-label="Enlarge image">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15 15l7 7" stroke="currentColor" stroke-width="2"/></svg>
+        </button>
+      {%- endif -%}
+    </div>
+
+    {%- if images.size > 1 -%}
+      <ul class="ul-gallery__thumbs" role="list">
+        {%- for media in images -%}
+          <li>
+            <button type="button" class="ul-gallery__thumb" data-ul-thumb="{{ forloop.index0 }}" aria-label="Show image {{ forloop.index }} of {{ images.size }}">
+              {{ media.preview_image | image_url: width: 128 | image_tag: loading: 'lazy', alt: '' }}
+            </button>
+          </li>
+        {%- endfor -%}
+      </ul>
     {%- endif -%}
+
+    <dialog class="ul-gallery__dialog" data-ul-zoom>
+      <form method="dialog"><button class="ul-gallery__close" aria-label="Close">&times;</button></form>
+      <img alt="" data-ul-zoom-image>
+    </dialog>
   </div>
 
   <div class="ul-product__info">
@@ -122,9 +153,60 @@
   (() => {
     const root = document.currentScript.previousElementSibling.querySelector('[data-ul-product]');
     const variants = JSON.parse(root.querySelector('[data-ul-variants]').textContent);
-    const selects = [...root.querySelectorAll('[data-ul-option]')];
-    if (!selects.length) return;
     const field = (name) => root.querySelector(`[data-ul-${name}]`);
+
+    const track = field('slides');
+    const slides = [...track.children];
+    const thumbs = [...root.querySelectorAll('[data-ul-thumb]')];
+    const strip = thumbs[0]?.closest('ul');
+    const dialog = field('zoom');
+    let active = 0;
+    const markActive = (index) => {
+      active = index;
+      thumbs.forEach((thumb, i) => thumb.setAttribute('aria-current', i === index));
+      const item = thumbs[index]?.parentElement;
+      if (item) strip.scrollTo({ top: item.offsetTop - (strip.clientHeight - item.offsetHeight) / 2, left: item.offsetLeft - (strip.clientWidth - item.offsetWidth) / 2 });
+    };
+    // While a programmatic scroll runs, the scroll listener waits for it to land on `pending`.
+    let pending = null;
+    const show = (index, behavior = 'smooth') => {
+      const target = (index + slides.length) % slides.length;
+      pending = target;
+      markActive(target);
+      track.scrollTo({ left: slides[target].offsetLeft, behavior });
+    };
+    const showMedia = (mediaId, behavior) => {
+      const index = slides.findIndex((slide) => slide.dataset.mediaId === String(mediaId));
+      if (index >= 0) show(index, behavior);
+    };
+    thumbs.forEach((thumb) => thumb.addEventListener('click', () => show(Number(thumb.dataset.ulThumb))));
+    root.querySelectorAll('[data-ul-step]').forEach((button) =>
+      button.addEventListener('click', () => show(active + Number(button.dataset.ulStep)))
+    );
+    let settle;
+    track.addEventListener('scroll', () => {
+      clearTimeout(settle);
+      settle = setTimeout(() => {
+        const index = Math.round(track.scrollLeft / track.clientWidth);
+        if (pending !== null && index !== pending) return;
+        pending = null;
+        markActive(index);
+      }, 100);
+    });
+    ['pointerdown', 'wheel', 'touchstart'].forEach((type) =>
+      track.addEventListener(type, () => (pending = null), { passive: true })
+    );
+    field('zoom-open')?.addEventListener('click', () => {
+      field('zoom-image').src = slides[active].dataset.zoom;
+      dialog.showModal();
+    });
+    dialog.addEventListener('click', (event) => event.target === dialog && dialog.close());
+
+    const selected = variants.find((item) => item.id === Number(field('variant-id').value));
+    if (selected?.media) showMedia(selected.media, 'instant');
+    else markActive(0);
+
+    const selects = [...root.querySelectorAll('[data-ul-option]')];
     const update = () => {
       const chosen = selects.map((select) => select.value);
       const variant = variants.find((item) => item.options.every((value, index) => value === chosen[index]));
@@ -143,8 +225,7 @@
       field('stock').textContent = variant.stock;
       submit.disabled = !variant.available;
       submit.textContent = variant.available ? 'Add to cart' : 'Sold out';
-      const media = variant.media && root.querySelector(`[data-media-id="${variant.media}"]`);
-      if (media) media.parentElement.prepend(media);
+      if (variant.media) showMedia(variant.media);
       const url = new URL(location.href);
       url.searchParams.set('variant', variant.id);
       history.replaceState(null, '', url);
@@ -156,10 +237,29 @@
 {% stylesheet %}
   .ul-product { display: grid; gap: 32px 64px; padding-block: 32px 64px; }
   @media (min-width: 990px) { .ul-product { grid-template-columns: 1fr 1fr; } }
-  .ul-product__gallery { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; align-content: start; }
-  .ul-product__media { margin: 0; border-radius: 8px; overflow: hidden; aspect-ratio: 1; }
-  .ul-product__media:first-child { grid-column: 1 / -1; }
-  .ul-product__media img, .ul-product__media svg { width: 100%; height: 100%; object-fit: cover; }
+  .ul-gallery { display: grid; gap: 8px; align-content: start; min-width: 0; }
+  .ul-gallery__stage { position: relative; }
+  .ul-gallery__slides { display: flex; margin: 0; padding: 0; list-style: none; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; border: 1px solid rgb(var(--color-foreground-rgb) / 0.1); border-radius: 8px; }
+  .ul-gallery__slides::-webkit-scrollbar { display: none; }
+  .ul-gallery__slide { flex: 0 0 100%; aspect-ratio: 1; scroll-snap-align: start; background: #fff; }
+  .ul-gallery__slide img, .ul-gallery__slide svg { width: 100%; height: 100%; object-fit: contain; }
+  .ul-gallery__arrow, .ul-gallery__zoom-button { position: absolute; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: rgb(255 255 255 / 0.9); color: #121212; box-shadow: 0 1px 4px rgb(0 0 0 / 0.16); cursor: pointer; }
+  .ul-gallery__arrow { top: 50%; translate: 0 -50%; font-size: 24px; line-height: 1; }
+  .ul-gallery__arrow--prev { left: 8px; }
+  .ul-gallery__arrow--next { right: 8px; }
+  .ul-gallery__zoom-button { top: 8px; right: 8px; }
+  .ul-gallery__thumbs { position: relative; display: flex; gap: 8px; margin: 0; padding: 0; list-style: none; overflow-x: auto; }
+  .ul-gallery__thumb { display: block; width: 64px; height: 64px; padding: 0; border: 1px solid rgb(var(--color-foreground-rgb) / 0.1); border-radius: 4px; overflow: hidden; background: #fff; cursor: pointer; }
+  .ul-gallery__thumb[aria-current="true"] { border-color: rgb(var(--color-foreground-rgb)); }
+  .ul-gallery__thumb img { width: 100%; height: 100%; object-fit: contain; }
+  @media (min-width: 750px) {
+    .ul-gallery { grid-template-columns: 64px minmax(0, 1fr); gap: 16px; }
+    .ul-gallery__thumbs { order: -1; flex-direction: column; height: 0; min-height: 100%; overflow: hidden auto; }
+  }
+  .ul-gallery__dialog { width: min(100vw - 32px, 1024px); max-height: calc(100vh - 32px); padding: 0; border: 0; border-radius: 8px; background: #fff; }
+  .ul-gallery__dialog::backdrop { background: rgb(0 0 0 / 0.8); }
+  .ul-gallery__dialog img { display: block; width: 100%; height: auto; }
+  .ul-gallery__close { position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: rgb(255 255 255 / 0.9); color: #121212; font-size: 24px; line-height: 1; cursor: pointer; }
   .ul-product__title { margin: 0 0 8px; }
   .ul-product__vendor { margin: 0 0 16px; opacity: 0.7; }
   .ul-product__price { display: flex; gap: 8px; align-items: baseline; margin: 0 0 32px; font-size: 24px; }
