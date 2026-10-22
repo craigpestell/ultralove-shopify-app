@@ -3,7 +3,7 @@ import { test } from "node:test";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { PassThrough } from "node:stream";
-import { CatalogError, importPlan, inventoryState, inventoryStates, productsPage, categoriesPage, selectedProducts, validateSelection } from "../app/catalog.server.ts";
+import { allCategories, CatalogError, importPlan, inventoryState, inventoryStates, productsPage, categoriesPage, selectedProducts, validateSelection } from "../app/catalog.server.ts";
 
 const product = {
   id: 1, parent_id: 0, name: "Supplier product", sku: "SKU-1", type: "simple",
@@ -198,4 +198,14 @@ test("restricted inventory transport accepts only bounded structured rate-limit 
     if (previousHost === undefined) delete process.env.CATALOG_SSH_HOST;
     else process.env.CATALOG_SSH_HOST = previousHost;
   }
+});
+
+test("category filter lists every supplier category sorted by name", async () => {
+  const pages = {
+    0: {categories: [{id: 3, name: "vibrators"}, {id: 7, name: "Bath &amp; Body"}], next_after_id: 7, has_more: true},
+    7: {categories: [{id: 9, name: "Anal Toys"}, {id: 12, name: "Lube 10"}, {id: 14, name: "Lube 2"}], next_after_id: 14, has_more: false},
+  };
+  const result = await allCategories(async (request) => pages[request.filters.after_id]);
+  assert.deepEqual(result.categories.map((category) => category.id), [9, 7, 14, 12, 3]);
+  await assert.rejects(allCategories(async () => ({categories: [], next_after_id: 0, has_more: true})), CatalogError);
 });
