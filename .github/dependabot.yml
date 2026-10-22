@@ -46,6 +46,8 @@ updates:
         versions: ['>7.18.2']
       - dependency-name: '@react-router/dev'
         versions: ['>7.18.2']
+      - dependency-name: '@react-router/express'
+        versions: ['>7.18.2']
       - dependency-name: '@react-router/fs-routes'
         versions: ['>7.18.2']
       - dependency-name: '@react-router/node'
@@ -83,6 +85,7 @@ updates:
       react-router:
         patterns:
           - '@react-router/dev'
+          - '@react-router/express'
           - '@react-router/fs-routes'
           - '@react-router/node'
           - '@react-router/serve'
