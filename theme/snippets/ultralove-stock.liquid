@@ -1,0 +1,12 @@
+{%- comment -%}
+  Stock text for one variant. Usage: {% render 'ultralove-stock', variant: variant %}
+{%- endcomment -%}
+{%- if variant.inventory_management == blank -%}
+  {%- if variant.available %}In stock{% else %}Unavailable{% endif -%}
+{%- elsif variant.inventory_quantity > 0 -%}
+  {{ variant.inventory_quantity }} in stock
+{%- elsif variant.available -%}
+  Out of stock, can be ordered
+{%- else -%}
+  Out of stock
+{%- endif -%}

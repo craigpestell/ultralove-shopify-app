@@ -1,0 +1,189 @@
+{%- comment -%}
+  Product detail for the lab storefront, used by templates/product.ultralove.json
+  (/products/<handle>?view=ultralove). One select per option picks the variant; the
+  price, SKU, stock and add-to-cart state follow the selected variant. Products with
+  only the default variant show no picker.
+{%- endcomment -%}
+{%- liquid
+  assign current = product.selected_or_first_available_variant
+  assign form_id = 'ul-product-form-' | append: section.id
+-%}
+<div class="section page-width-normal">
+<div class="ul-product" data-ul-product>
+  <div class="ul-product__gallery">
+    {%- if product.media.size > 0 -%}
+      {%- for media in product.media -%}
+        {%- if media.preview_image -%}
+          {%- liquid
+            assign loading = 'lazy'
+            if forloop.first
+              assign loading = 'eager'
+            endif
+          -%}
+          <figure class="ul-product__media" data-media-id="{{ media.id }}">
+            {{ media.preview_image | image_url: width: 1024 | image_tag: loading: loading, sizes: '(min-width: 990px) 50vw, 100vw', alt: media.alt | default: product.title | escape }}
+          </figure>
+        {%- endif -%}
+      {%- endfor -%}
+    {%- else -%}
+      <figure class="ul-product__media">{{ 'product-1' | placeholder_svg_tag }}</figure>
+    {%- endif -%}
+  </div>
+
+  <div class="ul-product__info">
+    <h1 class="ul-product__title">{{ product.title | escape }}</h1>
+    {%- if product.vendor != blank -%}<p class="ul-product__vendor">{{ product.vendor | escape }}</p>{%- endif -%}
+
+    <p class="ul-product__price">
+      <span data-ul-price>{{ current.price | money }}</span>
+      <s data-ul-compare{% unless current.compare_at_price > current.price %} hidden{% endunless %}>{{ current.compare_at_price | money }}</s>
+    </p>
+
+    {%- form 'product', product, id: form_id, class: 'ul-product__form' -%}
+      <input type="hidden" name="id" value="{{ current.id }}" data-ul-variant-id>
+
+      {%- unless product.has_only_default_variant -%}
+        <div class="ul-product__options">
+          {%- for option in product.options_with_values -%}
+            <label class="ul-field">
+              <span class="ul-field__label">{{ option.name | escape }}</span>
+              <select data-ul-option="{{ forloop.index0 }}">
+                {%- for value in option.values -%}
+                  <option value="{{ value | escape }}"{% if option.selected_value == value %} selected{% endif %}>{{ value | escape }}</option>
+                {%- endfor -%}
+              </select>
+            </label>
+          {%- endfor -%}
+        </div>
+      {%- endunless -%}
+
+      <dl class="ul-product__facts">
+        <div><dt>SKU</dt><dd data-ul-sku>{{ current.sku | default: '—' | escape }}</dd></div>
+        <div><dt>Stock</dt><dd data-ul-stock>{% render 'ultralove-stock', variant: current %}</dd></div>
+      </dl>
+
+      <div class="ul-product__buy">
+        <label class="ul-field ul-field--qty">
+          <span class="ul-field__label">Quantity</span>
+          <input type="number" name="quantity" value="1" min="1">
+        </label>
+        <button type="submit" class="button" data-ul-submit{% unless current.available %} disabled{% endunless %}>
+          {%- if current.available -%}Add to cart{%- else -%}Sold out{%- endif -%}
+        </button>
+      </div>
+    {%- endform -%}
+
+    {%- unless product.has_only_default_variant -%}
+      <details class="ul-product__variants">
+        <summary>All {{ product.variants.size }} variants</summary>
+        <table>
+          <thead><tr><th>Variant</th><th>SKU</th><th>Price</th><th>Stock</th></tr></thead>
+          <tbody>
+            {%- for variant in product.variants -%}
+              <tr>
+                <td>{{ variant.title | escape }}</td>
+                <td>{{ variant.sku | default: '—' | escape }}</td>
+                <td>{{ variant.price | money }}</td>
+                <td>{% render 'ultralove-stock', variant: variant %}</td>
+              </tr>
+            {%- endfor -%}
+          </tbody>
+        </table>
+      </details>
+    {%- endunless -%}
+
+    {%- if product.description != blank -%}
+      <div class="ul-product__description rte">{{ product.description }}</div>
+    {%- endif -%}
+  </div>
+
+  {%- comment -%} Variant data for the picker: stock text is rendered here so the script needs no copy of its rules. {%- endcomment -%}
+  <script type="application/json" data-ul-variants>
+    [
+      {%- for variant in product.variants -%}
+        {%- capture stock %}{% render 'ultralove-stock', variant: variant %}{% endcapture -%}
+        {
+          "id": {{ variant.id }},
+          "options": {{ variant.options | json }},
+          "available": {{ variant.available | json }},
+          "price": {{ variant.price | money | json }},
+          "compare": {% if variant.compare_at_price > variant.price %}{{ variant.compare_at_price | money | json }}{% else %}null{% endif %},
+          "sku": {{ variant.sku | default: '—' | json }},
+          "stock": {{ stock | strip | json }},
+          "media": {{ variant.featured_media.id | json }}
+        }{% unless forloop.last %},{% endunless %}
+      {%- endfor -%}
+    ]
+  </script>
+</div>
+</div>
+
+<script>
+  (() => {
+    const root = document.currentScript.previousElementSibling.querySelector('[data-ul-product]');
+    const variants = JSON.parse(root.querySelector('[data-ul-variants]').textContent);
+    const selects = [...root.querySelectorAll('[data-ul-option]')];
+    if (!selects.length) return;
+    const field = (name) => root.querySelector(`[data-ul-${name}]`);
+    const update = () => {
+      const chosen = selects.map((select) => select.value);
+      const variant = variants.find((item) => item.options.every((value, index) => value === chosen[index]));
+      const submit = field('submit');
+      if (!variant) {
+        submit.disabled = true;
+        submit.textContent = 'Unavailable';
+        field('stock').textContent = 'This combination is not offered';
+        return;
+      }
+      field('variant-id').value = variant.id;
+      field('price').textContent = variant.price;
+      field('compare').hidden = !variant.compare;
+      field('compare').textContent = variant.compare || '';
+      field('sku').textContent = variant.sku;
+      field('stock').textContent = variant.stock;
+      submit.disabled = !variant.available;
+      submit.textContent = variant.available ? 'Add to cart' : 'Sold out';
+      const media = variant.media && root.querySelector(`[data-media-id="${variant.media}"]`);
+      if (media) media.parentElement.prepend(media);
+      const url = new URL(location.href);
+      url.searchParams.set('variant', variant.id);
+      history.replaceState(null, '', url);
+    };
+    selects.forEach((select) => select.addEventListener('change', update));
+  })();
+</script>
+
+{% stylesheet %}
+  .ul-product { display: grid; gap: 32px 64px; padding-block: 32px 64px; }
+  @media (min-width: 990px) { .ul-product { grid-template-columns: 1fr 1fr; } }
+  .ul-product__gallery { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; align-content: start; }
+  .ul-product__media { margin: 0; border-radius: 8px; overflow: hidden; aspect-ratio: 1; }
+  .ul-product__media:first-child { grid-column: 1 / -1; }
+  .ul-product__media img, .ul-product__media svg { width: 100%; height: 100%; object-fit: cover; }
+  .ul-product__title { margin: 0 0 8px; }
+  .ul-product__vendor { margin: 0 0 16px; opacity: 0.7; }
+  .ul-product__price { display: flex; gap: 8px; align-items: baseline; margin: 0 0 32px; font-size: 24px; }
+  .ul-product__price s { font-size: 16px; opacity: 0.6; }
+  .ul-product__options { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; margin-bottom: 16px; }
+  .ul-field { display: flex; flex-direction: column; gap: 4px; }
+  .ul-field__label { font-size: 14px; opacity: 0.7; }
+  .ul-field select, .ul-field input { min-height: 48px; padding: 0 16px; font: inherit; border: 1px solid rgb(var(--color-foreground-rgb) / 0.3); border-radius: 8px; background: transparent; color: inherit; }
+  .ul-field--qty input { width: 96px; }
+  .ul-product__facts { display: flex; flex-wrap: wrap; gap: 16px 32px; margin: 0 0 32px; }
+  .ul-product__facts dt { font-size: 14px; opacity: 0.7; }
+  .ul-product__facts dd { margin: 0; }
+  .ul-product__buy { display: flex; align-items: end; gap: 16px; }
+  .ul-product__buy .button { flex: 1; min-height: 48px; }
+  .ul-product__variants { margin-top: 32px; }
+  .ul-product__variants summary { cursor: pointer; }
+  .ul-product__variants table { width: 100%; margin-top: 16px; border-collapse: collapse; font-size: 14px; }
+  .ul-product__variants th, .ul-product__variants td { padding: 8px; text-align: left; border-bottom: 1px solid rgb(var(--color-foreground-rgb) / 0.1); }
+  .ul-product__description { margin-top: 32px; }
+{% endstylesheet %}
+
+{% schema %}
+{
+  "name": "UltraLove product",
+  "settings": []
+}
+{% endschema %}
