@@ -1,0 +1,34 @@
+name: Deploy lab
+on:
+  workflow_run:
+    workflows: [App checks]
+    types: [completed]
+    branches: [main]
+permissions: {}
+concurrency:
+  group: deploy-lab
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RELEASE: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Deploy to the integration lab
+        env:
+          DEPLOY_KEY: ${{ secrets.LAB_DEPLOY_KEY }}
+          HOST_KEY: 104.248.211.144 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHKF5Khp43uT1dqkrXNYDqDidP1OVUeTuMS+GxnWpIXZ
+        run: |
+          [[ -n "$DEPLOY_KEY" ]] || { echo "::error::The LAB_DEPLOY_KEY secret is not set"; exit 1; }
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/lab_deploy
+          chmod 600 ~/.ssh/lab_deploy
+          printf '%s\n' "$HOST_KEY" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/lab_deploy -o IdentitiesOnly=yes -o BatchMode=yes root@104.248.211.144 "$RELEASE"
+      - name: Check HTTPS
+        run: curl --fail --silent --show-error https://shopify-lab.104-248-211-144.sslip.io/ | grep -q 'UltraLove Catalog'
