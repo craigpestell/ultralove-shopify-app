@@ -1,0 +1,6 @@
+{
+  "sections": {
+    "main": { "type": "ultralove-catalog", "settings": { "heading": "Catalog" } }
+  },
+  "order": ["main"]
+}

@@ -1,38 +1,47 @@
 {%- comment -%}
   Product grid for the lab storefront. Used by templates/collection.ultralove.json,
   e.g. /collections/all?view=ultralove, or /collections/all/ultralove-catalog-import?view=ultralove
-  for UltraLove imports only. Cards open the product with the ultralove product template.
+  for UltraLove imports only, and by templates/index.json as the home page, where it shows the
+  collection picked in its settings (all products by default). Cards open the product with the
+  ultralove product template; cards with more than one image get arrows to step through them.
 {%- endcomment -%}
-{%- paginate collection.products by section.settings.per_page -%}
+{%- assign source = collection | default: section.settings.collection | default: collections.all -%}
+{%- paginate source.products by section.settings.per_page -%}
   <div class="ul-catalog section page-width-normal">
     <header class="ul-catalog__header">
-      <h1 class="ul-catalog__title">{{ section.settings.heading | default: collection.title | escape }}</h1>
+      <h1 class="ul-catalog__title">{{ section.settings.heading | default: source.title | escape }}</h1>
       <p class="ul-catalog__count">
         {{- paginate.items }} {{ paginate.items | pluralize: 'product', 'products' -}}
         {%- if current_tags %} tagged {{ current_tags | join: ', ' | escape }}{% endif -%}
       </p>
     </header>
 
-    {%- if collection.products.size > 0 -%}
+    {%- if source.products.size > 0 -%}
       <ul class="ul-catalog__grid" role="list">
-        {%- for product in collection.products -%}
+        {%- for product in source.products -%}
           {%- liquid
-            assign url = product.url | within: collection | append: '?view=ultralove'
-            assign image = product.featured_media.preview_image
+            assign url = product.url | within: source | append: '?view=ultralove'
+            assign images = product.media | where: 'preview_image'
             assign variant_count = product.variants.size
           -%}
           <li class="ul-card">
-            <a class="ul-card__link" href="{{ url }}">
-              <div class="ul-card__media">
-                {%- if image -%}
-                  {{ image | image_url: width: 512 | image_tag: loading: 'lazy', sizes: '(min-width: 990px) 25vw, 50vw', alt: product.title | escape }}
+            <div class="ul-card__media">
+              <a class="ul-card__slides" href="{{ url }}" tabindex="-1" aria-hidden="true" data-ul-card-slides>
+                {%- for media in images -%}
+                  {{ media.preview_image | image_url: width: 512 | image_tag: loading: 'lazy', sizes: '(min-width: 990px) 25vw, 50vw', alt: '' }}
                 {%- else -%}
                   {{ 'product-1' | placeholder_svg_tag: 'ul-card__placeholder' }}
-                {%- endif -%}
-                {%- unless product.available -%}
-                  <span class="ul-badge ul-badge--muted">Sold out</span>
-                {%- endunless -%}
-              </div>
+                {%- endfor -%}
+              </a>
+              {%- if images.size > 1 -%}
+                <button type="button" class="ul-card__arrow ul-card__arrow--prev" data-ul-card-step="-1" aria-label="Previous image of {{ product.title | escape }}">&#8249;</button>
+                <button type="button" class="ul-card__arrow ul-card__arrow--next" data-ul-card-step="1" aria-label="Next image of {{ product.title | escape }}">&#8250;</button>
+              {%- endif -%}
+              {%- unless product.available -%}
+                <span class="ul-badge ul-badge--muted">Sold out</span>
+              {%- endunless -%}
+            </div>
+            <a class="ul-card__link" href="{{ url }}">
               <div class="ul-card__body">
                 <h2 class="ul-card__title">{{ product.title | escape }}</h2>
                 <p class="ul-card__price">
@@ -75,19 +84,37 @@
   </div>
 {%- endpaginate -%}
 
+<script>
+  document.currentScript.previousElementSibling.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-ul-card-step]');
+    if (!button) return;
+    const track = button.parentElement.querySelector('[data-ul-card-slides]');
+    const count = track.children.length;
+    const index = (Math.round(track.scrollLeft / track.clientWidth) + Number(button.dataset.ulCardStep) + count) % count;
+    track.scrollTo({ left: track.children[index].offsetLeft, behavior: 'smooth' });
+  });
+</script>
+
 {% stylesheet %}
   .ul-catalog { padding-block: 32px 64px; }
   .ul-catalog__header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; margin-bottom: 32px; }
   .ul-catalog__title { margin: 0; }
   .ul-catalog__count { margin: 0; opacity: 0.7; }
   .ul-catalog__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 224px), 1fr)); gap: 32px 16px; margin: 0; padding: 0; list-style: none; }
-  .ul-card__link { display: flex; flex-direction: column; height: 100%; color: inherit; text-decoration: none; }
+  .ul-card { display: flex; flex-direction: column; }
+  .ul-card__link { flex: 1; color: inherit; text-decoration: none; }
   .ul-card__media { position: relative; aspect-ratio: 1; overflow: hidden; border-radius: 8px; background: rgb(var(--color-foreground-rgb) / 0.04); }
-  .ul-card__media img, .ul-card__placeholder { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s ease; }
-  .ul-card__link:hover .ul-card__media img { transform: scale(1.04); }
+  .ul-card__slides { display: flex; height: 100%; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
+  .ul-card__slides::-webkit-scrollbar { display: none; }
+  .ul-card__slides > * { flex: 0 0 100%; width: 100%; height: 100%; object-fit: cover; scroll-snap-align: start; }
+  .ul-card__arrow { position: absolute; top: 50%; display: grid; place-items: center; width: 32px; height: 32px; margin-top: -16px; padding: 0; border: 0; border-radius: 50%; font-size: 24px; line-height: 1; color: #000; background: rgb(255 255 255 / 0.9); box-shadow: 0 1px 4px rgb(0 0 0 / 0.15); cursor: pointer; opacity: 0; transition: opacity 0.2s ease; }
+  .ul-card__arrow--prev { left: 8px; }
+  .ul-card__arrow--next { right: 8px; }
+  .ul-card:hover .ul-card__arrow, .ul-card__arrow:focus-visible { opacity: 1; }
+  @media (hover: none) { .ul-card__arrow { opacity: 1; } }
   .ul-card__body { padding-top: 16px; }
   .ul-card__title { margin: 0 0 8px; font-size: 16px; line-height: 1.3; }
-  .ul-card__link:hover .ul-card__title, .ul-card__link:focus-visible .ul-card__title { text-decoration: underline; }
+  .ul-card:hover .ul-card__title, .ul-card__link:focus-visible .ul-card__title { text-decoration: underline; }
   .ul-card__price, .ul-card__meta { margin: 0; }
   .ul-card__compare { margin-left: 8px; opacity: 0.6; }
   .ul-card__meta { margin-top: 4px; font-size: 14px; opacity: 0.7; }
@@ -102,6 +129,7 @@
   "name": "UltraLove catalog",
   "settings": [
     { "type": "text", "id": "heading", "label": "Heading", "info": "Defaults to the collection title" },
+    { "type": "collection", "id": "collection", "label": "Collection", "info": "Used outside collection pages, such as on the home page. Defaults to all products" },
     { "type": "range", "id": "per_page", "label": "Products per page", "min": 8, "max": 48, "step": 4, "default": 24 }
   ]
 }
