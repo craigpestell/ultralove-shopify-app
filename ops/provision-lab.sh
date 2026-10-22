@@ -104,13 +104,17 @@ fi
 ln -sfn "$directory" /srv/ultralove-shopify/current
 install -m 644 "$directory/ops/ultralove-shopify.service" /etc/systemd/system/ultralove-shopify.service
 install -m 644 "$directory/ops/ultralove-shopify-imports.service" /etc/systemd/system/ultralove-shopify-imports.service
-install -m 755 "$directory/ops/lab-deploy-command.sh" /usr/local/sbin/ultralove-shopify-deploy
-systemd-analyze verify /etc/systemd/system/ultralove-shopify.service /etc/systemd/system/ultralove-shopify-imports.service
+install -m 755 "$directory/ops/lab-pull-deploy.sh" /usr/local/sbin/ultralove-shopify-deploy
+install -m 644 "$directory/ops/ultralove-shopify-deploy.service" /etc/systemd/system/ultralove-shopify-deploy.service
+install -m 644 "$directory/ops/ultralove-shopify-deploy.timer" /etc/systemd/system/ultralove-shopify-deploy.timer
+systemd-analyze verify /etc/systemd/system/ultralove-shopify.service /etc/systemd/system/ultralove-shopify-imports.service \
+    /etc/systemd/system/ultralove-shopify-deploy.service /etc/systemd/system/ultralove-shopify-deploy.timer
 systemctl daemon-reload
 systemctl enable ultralove-shopify
 systemctl restart ultralove-shopify
 systemctl enable ultralove-shopify-imports
 systemctl restart ultralove-shopify-imports
+systemctl enable --now ultralove-shopify-deploy.timer
 systemctl is-active ultralove-shopify
 ready=false
 for attempt in {1..30}; do

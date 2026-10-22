@@ -1,0 +1,9 @@
+[Unit]
+Description=Deploy the latest checked UltraLove Catalog commit from main
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ultralove-shopify-deploy
+TimeoutStartSec=30min
