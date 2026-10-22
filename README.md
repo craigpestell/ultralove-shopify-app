@@ -1068,6 +1068,31 @@ the running release below was deployed from a git archive independently.
 Production rollout and independent retailer onboarding require separate work
 and approval.
 
+### Feed version check
+
+The supplier feed reports its contract version as `schema_version`
+(`major.minor`, from ultralove `wp-content/plugins/ultralove-product-feed`,
+1.2 when added). `app/feed-version.ts` reads major version 1, any minor.
+Before every import preview, import job and inventory sync cycle the app reads
+one category page through the existing `categories` proxy operation (no proxy
+change needed) and checks the version:
+
+- A newer minor version only adds fields, so work continues.
+- A feed without `schema_version` predates versioning (it matches 1.1) and
+  keeps working, so production keeps importing until its feed is updated.
+- Any other major, or an unreadable version, stops the work before it reads
+  products or writes to Shopify. Previews and import jobs fail with the
+  reason; inventory sync pauses every product without changing its state, like
+  the Settings pause, and checks again every 5 minutes.
+- An unreachable feed is not a version block; the import or sync reports the
+  connection problem itself.
+
+The latest check (time, trigger, version, result and pause reason) is kept in
+the one-row `FeedVersionCheck` table and shown on Settings, which can also run
+a check. Inventory sync reuses a check younger than a minute. When the feed's
+major version changes, update `SUPPORTED_MAJOR` and `KNOWN_VERSION` with the
+code that reads the new feed.
+
 ## Bulk inventory enrollment and cross-product batches
 
 Release `b6a2af4` adds **Enable inventory sync for all** to Inventory. Its required

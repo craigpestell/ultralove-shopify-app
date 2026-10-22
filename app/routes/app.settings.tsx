@@ -6,6 +6,9 @@ import { authenticateLabAdmin } from "../shopify.server";
 import { appSettings, catalogConnection, currentRelease, inventoryHealth, updateSettings, updateStatus } from "../settings.server";
 import { inventoryScreen } from "../inventory.server";
 import type { UpdateStatus } from "../settings.server";
+import { checkFeedVersion, lastFeedVersionCheck } from "../feed-version.server";
+import type { FeedVersionCheck } from "../feed-version.server";
+import { feedVersionLabel, feedVersionTriggerLabel, SUPPORTED_RANGE } from "../feed-version";
 import { WorkspaceNav } from "../workspace";
 import { workspaceHref } from "../workspace-policy";
 import { PendingLink, RequestFeedback, useNetworkState } from "../network-state";
@@ -15,8 +18,9 @@ const REPOSITORY = "https://github.com/craigpestell/ultralove-shopify-app";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticateLabAdmin(request);
-  const [settings, release, update, products] = await Promise.all([appSettings(), currentRelease(), updateStatus(), inventoryScreen(session.shop)]);
-  return { settings, release, update, inventory: inventoryHealth(products) };
+  const [settings, release, update, products, feedVersion] = await Promise.all([appSettings(), currentRelease(), updateStatus(),
+    inventoryScreen(session.shop), lastFeedVersionCheck()]);
+  return { settings, release, update, inventory: inventoryHealth(products), feedVersion };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -24,6 +28,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const form = await request.formData();
   const intent = form.get("intent");
   if (intent === "check-catalog") return data({ intent, error: null, on: null, catalog: await catalogConnection() });
+  // The loader reloads the recorded check after this, so the page shows it.
+  if (intent === "check-feed-version") return data({ intent, error: null, on: null, catalog: null, checked: (await checkFeedVersion("settings")).result });
   const values = form.getAll("value");
   if ((intent !== "auto-updates" && intent !== "inventory-sync") || values.length !== 1 || !["on", "off"].includes(String(values[0]))) {
     return data({ intent: null, error: "Choose on or off for this setting.", on: null, catalog: null }, { status: 400 });
@@ -48,8 +54,20 @@ function updateSummary(update: UpdateStatus) {
   }
 }
 
+function FeedVersionFacts({ check }: { check: FeedVersionCheck | null }) {
+  return <dl className="settings-facts">
+    <dt>Feed version</dt>
+    <dd>{check?.version ?? (check?.result === "unversioned" ? "Not reported (read as 1.1)" : "Unknown")}</dd>
+    <dt>Supported versions</dt><dd>{SUPPORTED_RANGE}</dd>
+    <dt>Last check</dt>
+    <dd>{check ? <>{formatTime(check.checkedAt)}<small>Checked {feedVersionTriggerLabel(check.trigger)}.</small></> : "No check recorded yet"}</dd>
+    {check && <><dt>Result</dt><dd>{feedVersionLabel(check.result)}</dd></>}
+    {check?.reason && <><dt>{check.allowed ? "Details" : "Paused because"}</dt><dd>{check.reason}</dd></>}
+  </dl>;
+}
+
 export default function Settings() {
-  const { settings, release, update, inventory } = useLoaderData<typeof loader>();
+  const { settings, release, update, inventory, feedVersion } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -58,6 +76,7 @@ export default function Settings() {
   const saving = pending({ intent: "auto-updates" });
   const pausing = pending({ intent: "inventory-sync" });
   const checking = pending({ intent: "check-catalog" });
+  const checkingVersion = pending({ intent: "check-feed-version" });
   // Show the requested position while it saves, so a switch does not snap back.
   const requested = navigation.formData?.get("value");
   const autoUpdates = saving ? requested === "on" : settings.autoUpdates;
@@ -127,6 +146,20 @@ export default function Settings() {
             error={catalog && !catalog.connected && !busy ? catalog.error : undefined} errorHeading="Supplier catalog unavailable"
             success={catalog?.connected && !busy ? `The supplier feed answered in ${(catalog.milliseconds / 1000).toFixed(1)} seconds.` : undefined}
             successHeading="Connected" />
+        </section>
+        <section className="workspace-panel settings-panel" aria-labelledby="feed-version-heading">
+          <h2 id="feed-version-heading">Supplier feed version</h2>
+          <p>Before every import preview, import and inventory sync, the app checks which version of the supplier feed it is reading.
+            A newer minor version only adds fields and is fine. A different major version means the feed changed in a way this app
+            cannot read, so imports and inventory sync pause until the app is updated. Sync looks again every 5 minutes and resumes by itself.</p>
+          {feedVersion && !feedVersion.allowed && <s-banner tone="critical" heading="Imports and inventory sync are paused">{feedVersion.reason}</s-banner>}
+          <FeedVersionFacts check={feedVersion} />
+          <Form method="post">
+            <input type="hidden" name="intent" value="check-feed-version" />
+            <s-button type="submit" disabled={busy} loading={checkingVersion}>Check feed version now</s-button>
+          </Form>
+          <RequestFeedback pending={checkingVersion} pendingMessage="Checking the supplier feed version"
+            success={result?.intent === "check-feed-version" && !busy && feedVersion?.allowed ? "Feed version checked. The result is shown above." : undefined} />
         </section>
       </div>
     </div>

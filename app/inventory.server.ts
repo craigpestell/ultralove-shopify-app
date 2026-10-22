@@ -13,6 +13,7 @@ import type { InventoryFeed, InventoryRead, Mapping, RemoteInventory, StockOpera
 import { fulfillmentMode } from "./fulfillment-policy";
 import { markListingDeleted } from "./listing-lifecycle.server";
 import { markupPercent } from "./pricing-policy";
+import { feedVersionGate } from "./feed-version.server";
 
 export async function inventoryScreen(shop: string) {
   assertLabShop(shop);
@@ -221,6 +222,8 @@ export async function runInventoryBatch(shop: string, supplierIds: number[], api
   if (!supplierIds.length || supplierIds.length > INVENTORY_PRODUCT_BATCH_SIZE ||
       supplierIds.some((id) => !Number.isInteger(id) || id < 1 || id > 2147483647) ||
       new Set(supplierIds).size !== supplierIds.length) throw new InventoryError("Schedule 1-5 distinct inventory products per cycle.");
+  // An unsupported supplier feed schema pauses every product, like the Settings pause: nothing is claimed.
+  if (!(await feedVersionGate("inventory")).allowed) return;
   const work: InventoryWork[] = [];
   const guard = (item: InventoryWork) => ({
     shop, supplierId: item.saved.supplierId, enabled: true, revision: item.saved.revision, status: "RUNNING",

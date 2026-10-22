@@ -24,7 +24,12 @@ test("published jobs persist opt-in settings and recover an uncertain publicatio
         if (!id.endsWith("/app/catalog.server.ts")) return;
         return `
           import { retailPrice } from "/app/pricing-policy.ts";
-          export const fixture = { fail: false, calls: [], secondBatch: null };
+          export const fixture = { fail: false, calls: [], secondBatch: null, schemaVersion: "1.2", versionChecks: 0 };
+          export class CatalogError extends Error {}
+          export async function categoriesPage() {
+            fixture.versionChecks++;
+            return { categories: [], next_after_id: 0, has_more: false, schemaVersion: fixture.schemaVersion };
+          }
           export async function validateSelection() {}
           export async function importPlan(ids, location, run, markup) {
             fixture.calls.push(ids);
@@ -51,7 +56,7 @@ test("published jobs persist opt-in settings and recover an uncertain publicatio
   });
   const { default: db } = await server.ssrLoadModule("/app/db.server.ts");
   try {
-    for (const migration of ["20261009120000_catalog_selection", "20261009130000_import_jobs", "20261009190000_import_visibility", "20261009200000_inventory_sync", "20261009203000_product_markups", "20261009220000_listing_policy", "20261012030000_fulfillment_modes", "20261012034000_deleted_listings"]) {
+    for (const migration of ["20261009120000_catalog_selection", "20261009130000_import_jobs", "20261009190000_import_visibility", "20261009200000_inventory_sync", "20261009203000_product_markups", "20261009220000_listing_policy", "20261012030000_fulfillment_modes", "20261012034000_deleted_listings", "20261022090000_feed_version_check"]) {
       const sql = await readFile(new URL(`../prisma/migrations/${migration}/migration.sql`, import.meta.url), "utf8");
       for (const statement of sql.split(";").filter((part) => part.trim())) await db.$executeRawUnsafe(statement);
     }
@@ -112,7 +117,22 @@ test("published jobs persist opt-in settings and recover an uncertain publicatio
     };
 
     await db.catalogSelection.create({ data: { shop, productIds: "[100]", fulfillmentModes: '{"100":"DROPSHIPPING"}' } });
+    const { fixture: feed } = await server.ssrLoadModule("/app/catalog.server.ts");
+    const { lastFeedVersionCheck } = await server.ssrLoadModule("/app/feed-version.server.ts");
+    feed.schemaVersion = "2.0";
+    await assert.rejects(createPreview(shop, "25", api, { active: true, publish: true }), /schema 2\.0, but this app supports 1\.x.*Nothing was saved/,
+      "a breaking feed version stops the preview before reading any product");
+    assert.equal(feed.calls.length, 0);
+    assert.equal(await db.importJob.count(), 0);
+    const { checkedAt, ...recorded } = await lastFeedVersionCheck();
+    assert.ok(Date.now() - Date.parse(checkedAt) < 60000);
+    assert.deepEqual(recorded, { trigger: "preview", version: "2.0", result: "unsupported", allowed: false,
+      reason: "The supplier feed uses schema 2.0, but this app supports 1.x. Imports and inventory sync are paused until the app is updated for the new feed." },
+      "the check and its reason are recorded for Settings");
+    feed.schemaVersion = undefined;
     const preview = await createPreview(shop, "25", api, { active: true, publish: true });
+    assert.equal((await lastFeedVersionCheck()).result, "unversioned", "a feed from before versioning (production today) still imports");
+    feed.schemaVersion = "1.7";
     assert.equal(preview.active, true);
     assert.equal(preview.publicationId, publicationId);
     const screen = await importScreen(shop, preview.id);
@@ -120,7 +140,18 @@ test("published jobs persist opt-in settings and recover an uncertain publicatio
     assert.equal(screen.job.items[0].retail, "15.63 CAD");
     await assert.rejects(queueJob(shop, preview.id, false, "draft-only"), /saved import visibility/);
     await queueJob(shop, preview.id, false, "publish-online-store");
+    feed.schemaVersion = "2.1";
+    const checks = feed.versionChecks;
     await runJob(preview.id, shop, api, () => false);
+    const paused = await importScreen(shop, preview.id);
+    assert.equal(feed.versionChecks, checks + 1, "every import run checks the feed version first");
+    assert.equal(paused.job.status, "FAILED");
+    assert.match(paused.job.error, /^Import paused before any change\. The supplier feed uses schema 2\.1/);
+    assert.deepEqual(mutations, { create: 0, activate: 0, publish: 0 }, "nothing reaches Shopify while the feed is unsupported");
+    feed.schemaVersion = "1.9";
+    await queueJob(shop, preview.id, true, "publish-online-store");
+    await runJob(preview.id, shop, api, () => false);
+    assert.equal((await lastFeedVersionCheck()).result, "newer-minor", "a newer minor version of the same major imports");
     const failed = await importScreen(shop, preview.id);
     assert.equal(failed.job.status, "FAILED");
     assert.equal(failed.job.items[0].status, "FAILED");

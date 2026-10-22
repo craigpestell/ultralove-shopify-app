@@ -115,7 +115,7 @@ export async function productsPage(filters: object, transport: Transport = sshTr
   return { products, next_after_id: Number(data.next_after_id), has_more: Boolean(data.has_more) };
 }
 
-export async function categoriesPage(after: number, transport: Transport = sshTransport): Promise<Page<{ categories: Category[] }>> {
+export async function categoriesPage(after: number, transport: Transport = sshTransport): Promise<Page<{ categories: Category[]; schemaVersion: unknown }>> {
   const data = envelope(await transport({ operation: "categories", filters: { after_id: after } }));
   if (!Array.isArray(data.categories) || data.categories.length > 50) throw new CatalogError("Supplier category page exceeded its limit.");
   const categories = data.categories.map((record: unknown) => {
@@ -124,7 +124,8 @@ export async function categoriesPage(after: number, transport: Transport = sshTr
     }
     return { id: Number(record.id), name: record.name };
   });
-  return { categories, next_after_id: Number(data.next_after_id), has_more: Boolean(data.has_more) };
+  // Checked by feed-version.server.ts; feeds from before versioning leave it undefined.
+  return { categories, next_after_id: Number(data.next_after_id), has_more: Boolean(data.has_more), schemaVersion: data.schema_version };
 }
 
 const CATEGORY_PAGE_LIMIT = 40;
