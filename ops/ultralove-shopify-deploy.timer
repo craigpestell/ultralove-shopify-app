@@ -1,0 +1,10 @@
+[Unit]
+Description=Check main for a new UltraLove Catalog release every 5 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=5min
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target

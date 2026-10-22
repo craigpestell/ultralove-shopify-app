@@ -1231,14 +1231,17 @@ migrations are additive and are not reversed. This deploys app code only:
 `shopify.app.toml` scopes and webhooks need a reviewed `shopify app deploy`
 (see [Existing Shopify app](#existing-shopify-app)).
 
-Merges to `main` deploy automatically: the **Deploy lab** workflow runs after
-**App checks** passes on a push to `main` and connects with the `LAB_DEPLOY_KEY`
-secret. That key's `authorized_keys` entry is restricted to
-`command="/usr/local/sbin/ultralove-shopify-deploy"` (installed from
-`ops/lab-deploy-command.sh` by provisioning), which accepts only a commit SHA,
-fetches it from GitHub, and deploys it only while it is the tip of `main` with
-passing App checks. Deploys from the workflow and from `ops/deploy-lab.sh` share
-a lock on the lab, so they never provision at the same time.
+Merges to `main` deploy automatically. The lab pulls rather than GitHub
+pushing, so SSH stays closed to everything but the maintainer's address:
+`ultralove-shopify-deploy.timer` runs `/usr/local/sbin/ultralove-shopify-deploy`
+(installed from `ops/lab-pull-deploy.sh` by provisioning) every 5 minutes. It
+fetches `main` from GitHub and, when its tip differs from `current` and its
+**App checks** push run has passed, provisions it as above. A release that fails
+to provision is recorded in `/var/lib/ultralove-shopify-deploy/failed` and not
+retried until `main` moves on; read `journalctl -u ultralove-shopify-deploy`.
+Automatic deploys and `ops/deploy-lab.sh` share a lock on the lab, so they never
+provision at the same time. A manual deploy of an older commit stays until the
+next merge, because the timer only acts when `main` changes.
 
 ### Inventory deployment verification, 2026-10-09
 
