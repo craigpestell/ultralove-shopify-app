@@ -120,3 +120,11 @@ model InventorySync {
   @@unique([shop, productId])
   @@index([shop, enabled, nextRunAt])
 }
+
+// Host-wide settings for the integration lab, kept in one row. The lab's pull-deploy
+// script reads autoUpdates directly from SQLite, so keep the table and column names stable.
+model AppSettings {
+  id          String   @id @default("lab")
+  autoUpdates Boolean  @default(true)
+  updatedAt   DateTime @updatedAt
+}

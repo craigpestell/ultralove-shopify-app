@@ -58,7 +58,7 @@ export function WorkspaceNav({ current }: { current: string }) {
   return <nav className="workspace-nav" aria-label="UltraLove workspace">
     {[
       ["catalog", "Catalog"], ["selection", `Selection & pricing (${draft.selected.length})`],
-      ["imports", "Imports"], ["inventory", "Inventory"],
+      ["imports", "Imports"], ["inventory", "Inventory"], ["settings", "Settings"],
     ].map(([view, label]) => <PendingLink key={view} aria-current={current === view || (current === "review" && view === "selection") ? "page" : undefined}
       to={workspaceHref(search, view, draft.browse)} pendingLabel={`Loading ${label}`}>{label}</PendingLink>)}
     <span className="workspace-lab">Integration lab · CAD</span>

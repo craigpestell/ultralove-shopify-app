@@ -102,5 +102,5 @@ export function workspaceHref(search: string, view: string, browse = "", job?: s
   }
   params.set("view", view);
   if (job) params.set("job", job);
-  return `${view === "inventory" ? "/app/inventory" : "/app"}?${params}`;
+  return `${view === "inventory" || view === "settings" ? `/app/${view}` : "/app"}?${params}`;
 }

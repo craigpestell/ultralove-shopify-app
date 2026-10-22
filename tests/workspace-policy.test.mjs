@@ -67,5 +67,6 @@ test("workspace restores multi-page drafts, preserves unfinished edits and store
     assert.equal(workspaceHref("?host=embedded&shop=lab", "catalog", restored.browse),
       "/app?host=embedded&shop=lab&search=Amber&after_id=100&view=catalog");
     assert.equal(workspaceHref("?host=embedded", "imports", "", "abc"), "/app?host=embedded&view=imports&job=abc");
+    assert.equal(workspaceHref("?host=embedded&shop=lab&search=old", "settings", restored.browse), "/app/settings?host=embedded&shop=lab&view=settings");
   } finally { await server.close(); }
 });

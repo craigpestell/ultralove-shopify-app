@@ -3,7 +3,9 @@
 # /usr/local/sbin/ultralove-shopify-deploy and run every few minutes by
 # ultralove-shopify-deploy.timer. Fetches main from GitHub and deploys its tip once
 # its App checks run has passed. A release that fails to provision is recorded and
-# not retried until main moves on.
+# not retried until main moves on. Timer runs do nothing while automatic updates are
+# off in the app's Settings page; an explicit SHA still deploys. Each run writes its
+# outcome to status.json, which the Settings page shows.
 # Usage: ultralove-shopify-deploy [full commit SHA]   (default: tip of main)
 {
 set -euo pipefail
@@ -12,9 +14,36 @@ repository=craigpestell/ultralove-shopify-app
 root=/srv/ultralove-shopify
 source="$root/source.git"
 failed=/var/lib/ultralove-shopify-deploy/failed
+status=/var/lib/ultralove-shopify-deploy/status.json
+recorded=false
 
 exec 9>/run/ultralove-shopify-deploy.lock
 flock 9
+
+install -d -m 755 "${status%/*}"
+record() {
+    printf '{"checkedAt":"%s","result":"%s","release":"%s","checks":"%s"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${2:-}" "${3:-}" >"$status.tmp"
+    mv "$status.tmp" "$status"
+    recorded=true
+}
+trap 'code=$?; [[ $code == 0 || $recorded == true ]] || record error' EXIT
+
+# A missing database, table or row means automatic updates are on.
+if [[ $# == 0 ]] && ! python3 - <<'PY'
+import sqlite3, sys
+try:
+    with sqlite3.connect("file:/var/lib/ultralove-shopify/sessions.sqlite?mode=ro", uri=True) as db:
+        row = db.execute("SELECT autoUpdates FROM AppSettings WHERE id = 'lab'").fetchone()
+except sqlite3.Error:
+    row = None
+sys.exit(1 if row and not row[0] else 0)
+PY
+then
+    echo "Automatic updates are off in the app's Settings; not checking main."
+    record off
+    exit 0
+fi
 
 [[ -d "$source" ]] || git init --quiet --bare "$source"
 git -C "$source" fetch --quiet "https://github.com/$repository.git" +refs/heads/main:refs/heads/main
@@ -24,8 +53,8 @@ git -C "$source" merge-base --is-ancestor "$release" refs/heads/main ||
     { echo "$release is not on main" >&2; exit 2; }
 
 if [[ $# == 0 ]]; then
-    [[ "$(readlink "$root/current")" == "$root/releases/$release" ]] && exit 0
-    [[ "$(cat "$failed" 2>/dev/null)" == "$release" ]] && exit 0
+    [[ "$(readlink "$root/current")" == "$root/releases/$release" ]] && { record current "$release"; exit 0; }
+    [[ "$(cat "$failed" 2>/dev/null)" == "$release" ]] && { record failed "$release"; exit 0; }
 fi
 
 checks="$(curl --fail --silent --show-error \
@@ -35,6 +64,7 @@ runs = [r for r in json.load(sys.stdin)["workflow_runs"] if r["name"] == "App ch
 print(runs[0]["conclusion"] or runs[0]["status"] if runs else "missing")')"
 if [[ "$checks" != success ]]; then
     echo "App checks for $release: $checks; not deploying."
+    record waiting "$release" "$checks"
     exit 0
 fi
 
@@ -49,9 +79,11 @@ fi
 install -d -m 755 "${failed%/*}"
 if ! bash "$directory/ops/provision-lab.sh" "$release"; then
     echo "$release" >"$failed"
+    record failed "$release"
     echo "Provisioning $release failed; it will not be retried until main changes." >&2
     exit 1
 fi
 rm -f "$failed"
+record deployed "$release"
 exit
 }
