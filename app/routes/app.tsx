@@ -6,6 +6,7 @@ import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { authenticateLabAdmin } from "../shopify.server";
 import { savedConfiguration } from "../imports.server";
 import { WorkspaceProvider } from "../workspace";
+import { AdminLoadingBar } from "../network-state";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticateLabAdmin(request);
@@ -19,6 +20,7 @@ export default function App() {
 
   return (
     <AppProvider apiKey={apiKey}>
+      <AdminLoadingBar />
       <WorkspaceProvider shop={shop} saved={saved}><Outlet /></WorkspaceProvider>
     </AppProvider>
   );

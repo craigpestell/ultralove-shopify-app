@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import { Form, Link, useActionData, useFetcher, useLoaderData, useLocation, useNavigation, useSubmit } from "react-router";
+import { Form, useActionData, useFetcher, useLoaderData, useLocation, useSubmit } from "react-router";
 import type { action, loader } from "./routes/app._index";
 import type { loader as detailsLoader } from "./routes/app.selection-details";
 import { CATALOG_BATCH_SIZE, pageSelection, supplierText } from "./catalog-policy";
@@ -11,6 +11,7 @@ import ProductImage from "./product-image";
 import ImportOptions from "./import-options";
 import ImportResults from "./import-results";
 import ListingOptions from "./listing-options";
+import { PendingLink, RequestFeedback, useNetworkState } from "./network-state";
 import "./catalog.css";
 
 function stockLabel(product: { type: string; manage_stock: boolean; stock_quantity: number | null; stock_owner_id: number | null; id: number }) {
@@ -23,13 +24,14 @@ function stockLabel(product: { type: string; manage_stock: boolean; stock_quanti
 export default function CatalogWorkspace() {
   const { selected, markup: savedMarkup, markups: savedMarkups, fulfillmentModes: savedModes, filters, products, categories, error, job, history } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
-  const navigation = useNavigation();
   const submit = useSubmit();
   const configurationForm = useRef<HTMLFormElement>(null);
   const location = useLocation();
   const { draft, setDraft, storageAvailable } = useWorkspace();
   const { selected: ids, markup, markups } = draft;
-  const busy = navigation.state !== "idle";
+  const { busy, pending } = useNetworkState();
+  const previewing = pending({ intent: "preview" });
+  const saving = pending({ intent: "save-configuration" });
   const modes = draft.fulfillmentModes ?? {};
   const baseline = signature({ selected, markup: savedMarkup, markups: savedMarkups, fulfillmentModes: savedModes });
   const dirty = signature(draft) !== baseline;
@@ -146,11 +148,13 @@ export default function CatalogWorkspace() {
             view === "selection" ? "Set your selling prices and remove anything you don't want to import." :
               view === "review" ? "Review prices and any requested product updates. Nothing changes until you confirm." :
                 "Track imports, review products, or safely retry unfinished items."}</p></div>
-        {view === "imports" && <Link className="workspace-primary" to={viewHref("catalog")}>Browse catalog</Link>}
+        {view === "imports" && <PendingLink className="workspace-primary" to={viewHref("catalog")}>Browse catalog</PendingLink>}
       </header>
       {!storageAvailable && <s-banner heading="Browser draft storage unavailable" tone="warning">Your working changes remain while navigating this app, but save before reloading or closing this tab.</s-banner>}
-      {error && <div role="alert"><s-banner heading="Catalog unavailable" tone="critical">{error} <Link to={href({})}>Retry catalog</Link></s-banner></div>}
-      {result?.error && <div role="alert"><s-banner heading="Action could not be completed" tone="critical">{result.error}</s-banner></div>}
+      <RequestFeedback error={error} errorHeading="Catalog unavailable"><PendingLink to={href({})}>Retry catalog</PendingLink></RequestFeedback>
+      <RequestFeedback pending={previewing || saving}
+        pendingMessage={previewing ? "Saving your configuration and checking every variant. Large selections can take a moment." : "Saving your selection and pricing to the store."}
+        error={result?.error} success={result && "saved" in result && result.saved && !dirty ? "Selection and pricing saved to your store." : undefined} />
       {(view === "catalog" || view === "selection") && <Form method="post" ref={configurationForm} id="configuration-form">
         <input type="hidden" name="intent" value="preview" />
         <input type="hidden" name="ids" value={JSON.stringify(ids)} />
@@ -173,12 +177,12 @@ export default function CatalogWorkspace() {
               {categories?.categories.map((category) => <option key={category.id} value={category.id}>{supplierText(category.name)}</option>)}
             </select>
           </label>
-          <s-button type="submit" disabled={busy} loading={busy && navigation.formMethod === "GET"}>Search catalog</s-button>
-          {(filters.search || filters.category_id) && <Link to={href({ search: null, category_id: null, after_id: null })}>Clear filters</Link>}
+          <s-button type="submit" disabled={busy} loading={pending({ method: "GET" })}>Search catalog</s-button>
+          {(filters.search || filters.category_id) && <PendingLink to={href({ search: null, category_id: null, after_id: null })}>Clear filters</PendingLink>}
         </Form>
         <div className="catalog-toolbar"><span>{products?.products.length ?? 0} products on this page · CAD</span>
-          <Link to={viewHref("selection")}>Retail estimates at {markup}% default markup</Link>
-          {categories?.has_more && <Link to={href({ category_after: String(categories.next_after_id) })}>More categories</Link>}</div>
+          <PendingLink to={viewHref("selection")}>Retail estimates at {markup}% default markup</PendingLink>
+          {categories?.has_more && <PendingLink to={href({ category_after: String(categories.next_after_id) })}>More categories</PendingLink>}</div>
         {/* A focusable region lets keyboard users scroll wide catalog tables. */}
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
         <div className="catalog-table" tabIndex={0} role="region" aria-label="UltraLove's catalog">
@@ -201,9 +205,9 @@ export default function CatalogWorkspace() {
             </tr>)}</tbody>
           </table>
         </div>
-        {products && !products.products.length && <div className="workspace-empty"><h2>No matching products</h2><p>Try another name or SKU. Your selections have not changed.</p><Link to={href({ search: null, category_id: null, after_id: null })}>Clear filters</Link></div>}
-        <nav className="catalog-pagination" aria-label="Catalog pages"><Link to={href({ after_id: null })}>First page</Link>
-          {products?.has_more && <Link to={href({ after_id: String(products.next_after_id) })}>Next 50 products</Link>}</nav>
+        {products && !products.products.length && <div className="workspace-empty"><h2>No matching products</h2><p>Try another name or SKU. Your selections have not changed.</p><PendingLink to={href({ search: null, category_id: null, after_id: null })}>Clear filters</PendingLink></div>}
+        <nav className="catalog-pagination" aria-label="Catalog pages"><PendingLink to={href({ after_id: null })}>First page</PendingLink>
+          {products?.has_more && <PendingLink to={href({ after_id: String(products.next_after_id) })}>Next 50 products</PendingLink>}</nav>
       </section>}
       {view === "selection" && <div className="selection-layout">
         <section className="workspace-panel selection-list" aria-labelledby="selected-heading">
@@ -226,7 +230,7 @@ export default function CatalogWorkspace() {
             {details.data.error} Your selections and pricing edits are unchanged.
             <s-button disabled={details.state !== "idle" || !missingDetails.length} onClick={loadDetails}>Retry details</s-button>
           </s-banner></div>}
-          {!ids.length ? <div className="workspace-empty"><h2>Start with a few products</h2><p>Select products in the catalog, then return here to set pricing.</p><Link to={viewHref("catalog")}>Browse catalog</Link></div> :
+          {!ids.length ? <div className="workspace-empty"><h2>Start with a few products</h2><p>Select products in the catalog, then return here to set pricing.</p><PendingLink to={viewHref("catalog")}>Browse catalog</PendingLink></div> :
             <><p role="status">Showing {selection.start}–{selection.end} of {selection.total} {draft.selectionSearch.trim() ? `matching products (${ids.length} selected in total)` : "selected products"}</p>
             {!selection.total && <div className="workspace-empty"><h3>No matching selected products</h3><p>Try a different name, SKU or product ID, or clear the search.</p></div>}
             <ul className="selection-products">{selection.ids.map((id) => {
@@ -256,7 +260,7 @@ export default function CatalogWorkspace() {
               <span>Page {selection.page} of {selection.pages}</span>
               <s-button disabled={selection.page === selection.pages} onClick={() => setDraft((current) => ({ ...current, selectionPage: selection.page + 1 }))}>Next</s-button>
             </nav></>}
-          <Link to={viewHref("catalog")}>Add more products</Link>
+          <PendingLink to={viewHref("catalog")}>Add more products</PendingLink>
         </section>
         <aside className="workspace-panel pricing-panel" aria-labelledby="pricing-heading">
           <fieldset className="catalog-import-options"><legend>How will you fulfill these products?</legend>
@@ -298,10 +302,10 @@ export default function CatalogWorkspace() {
       {(view === "catalog" || view === "selection") && <div className="selection-bar">
         <div role="status" aria-live="polite"><strong>{ids.length} selected</strong><small>{dirty ? "Unsaved to store" : "Saved to store"}{storageAvailable ? " · Draft kept in this tab" : ""}{view === "catalog" && offPage.length ? ` · ${offPage.length} outside this page` : ""}</small></div>
         <div className="catalog-actions">
-          <s-button disabled={busy || !dirty} onClick={save} loading={busy && navigation.formData?.get("intent") === "save-configuration"}>Save changes</s-button>
+          <s-button disabled={busy || !dirty} onClick={save} loading={saving}>Save changes</s-button>
           <details className="selection-reset"><summary>Reset</summary><s-button disabled={busy || !dirty} onClick={() => setDraft((current) => ({ ...current, selected, markup: savedMarkup, markups: savedMarkups, fulfillmentModes: savedModes }))}>Restore saved selection and markup</s-button></details>
-          {view === "catalog" ? <Link className="workspace-primary" to={viewHref("selection")}>Review selection{ids.length ? ` (${ids.length})` : ""}</Link> :
-            <s-button variant="primary" disabled={busy || !ids.length || !validPricing(draft) || !validListingChoices(draft)} loading={busy && navigation.formData?.get("intent") === "preview"}
+          {view === "catalog" ? <PendingLink className="workspace-primary" to={viewHref("selection")} pendingLabel="Loading your selection">Review selection{ids.length ? ` (${ids.length})` : ""}</PendingLink> :
+            <s-button variant="primary" disabled={busy || !ids.length || !validPricing(draft) || !validListingChoices(draft)} loading={previewing}
               onClick={() => { if (configurationForm.current) submit(new FormData(configurationForm.current), { method: "post" }); }}>Create pricing preview</s-button>}
         </div>
       </div>}

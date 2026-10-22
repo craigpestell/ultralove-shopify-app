@@ -1,11 +1,13 @@
 import { Form, useSubmit } from "react-router";
 import type { inventoryScreen } from "./inventory.server";
 import { defaultListingPolicy } from "./listing-policy";
+import { useNetworkState } from "./network-state";
 
 type Product = Awaited<ReturnType<typeof inventoryScreen>>[number];
 
 export default function InventoryRecovery({ product, busy, action }: { product: Product; busy: boolean; action: string }) {
   const submit = useSubmit();
+  const { pending } = useNetworkState();
   return <details>
     <summary>Recover deleted listing</summary>
     <p>Nothing is recreated automatically. Review a new unpublished draft or connect an existing product.
@@ -19,6 +21,7 @@ export default function InventoryRecovery({ product, busy, action }: { product: 
         submit(form, { method: "post", action });
       } : undefined}>
       <input type="hidden" name="intent" value="preview" />
+      <input type="hidden" name="recovery" value={`${mode}-${product.supplierId}`} />
       <input type="hidden" name="ids" value={JSON.stringify([product.supplierId])} />
       <input type="hidden" name="markup" value={product.markup} />
       <input type="hidden" name="markups" value="{}" />
@@ -31,7 +34,7 @@ export default function InventoryRecovery({ product, busy, action }: { product: 
         <input name="connection" type="text" maxLength={1000} autoComplete="off" required disabled={busy}
           placeholder="Paste its Shopify admin product URL" />
       </label>}
-      <s-button type="submit" disabled={busy}>{mode === "recreate" ? "Review re-import as a new draft" : "Review connection to existing product"}</s-button>
+      <s-button type="submit" disabled={busy} loading={pending({ intent: "preview", fields: { recovery: `${mode}-${product.supplierId}` } })}>{mode === "recreate" ? "Review re-import as a new draft" : "Review connection to existing product"}</s-button>
     </Form>)}
     <p>These actions create a fresh review for this product and replace the working selection. Import confirmation is still required.
       A pending stock correction must be reconciled before changing its mapping.</p>
