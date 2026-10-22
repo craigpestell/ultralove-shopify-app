@@ -167,3 +167,12 @@
 .catalog-browser .catalog-show button + button { border-left: 1px solid #c9cccf; }
 .catalog-browser .catalog-show button[aria-pressed="true"] { background: #303030; color: #fff; }
 .catalog-browser .catalog-undo { display: flex; align-items: center; gap: 12px; margin: 0 0 16px; border-radius: 8px; }
+.settings-layout { display: grid; gap: 16px; max-width: 80ch; }
+.settings-panel { display: grid; gap: 12px; }
+.settings-panel h2, .settings-panel p { margin: 0; }
+.settings-switch { display: flex; align-items: center; gap: 10px; font-weight: 600; cursor: pointer; }
+.settings-switch input { width: 20px; height: 20px; margin: 0; }
+.settings-facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 0; }
+.settings-facts dt { color: var(--workspace-muted); }
+.settings-facts dd { margin: 0; }
+.settings-facts small { display: block; color: var(--workspace-muted); }
