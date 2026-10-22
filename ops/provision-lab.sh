@@ -104,6 +104,7 @@ fi
 ln -sfn "$directory" /srv/ultralove-shopify/current
 install -m 644 "$directory/ops/ultralove-shopify.service" /etc/systemd/system/ultralove-shopify.service
 install -m 644 "$directory/ops/ultralove-shopify-imports.service" /etc/systemd/system/ultralove-shopify-imports.service
+install -m 755 "$directory/ops/lab-deploy-command.sh" /usr/local/sbin/ultralove-shopify-deploy
 systemd-analyze verify /etc/systemd/system/ultralove-shopify.service /etc/systemd/system/ultralove-shopify-imports.service
 systemctl daemon-reload
 systemctl enable ultralove-shopify

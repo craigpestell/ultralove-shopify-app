@@ -1231,6 +1231,15 @@ migrations are additive and are not reversed. This deploys app code only:
 `shopify.app.toml` scopes and webhooks need a reviewed `shopify app deploy`
 (see [Existing Shopify app](#existing-shopify-app)).
 
+Merges to `main` deploy automatically: the **Deploy lab** workflow runs after
+**App checks** passes on a push to `main` and connects with the `LAB_DEPLOY_KEY`
+secret. That key's `authorized_keys` entry is restricted to
+`command="/usr/local/sbin/ultralove-shopify-deploy"` (installed from
+`ops/lab-deploy-command.sh` by provisioning), which accepts only a commit SHA,
+fetches it from GitHub, and deploys it only while it is the tip of `main` with
+passing App checks. Deploys from the workflow and from `ops/deploy-lab.sh` share
+a lock on the lab, so they never provision at the same time.
+
 ### Inventory deployment verification, 2026-10-09
 
 - App code commit/release `107030bcd7f7824095d9140dd305fe186c94ba7d`;

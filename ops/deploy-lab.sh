@@ -42,7 +42,7 @@ else
 fi
 
 before="$(ssh "$lab" "readlink $root/current")"
-ssh "$lab" "bash $root/releases/$release/ops/provision-lab.sh $release"
+ssh "$lab" "flock /run/ultralove-shopify-deploy.lock bash $root/releases/$release/ops/provision-lab.sh $release"
 
 current="$(ssh "$lab" "readlink $root/current")"
 [[ "$current" == "$root/releases/$release" ]] || { echo "current points to $current, expected $release" >&2; exit 1; }
