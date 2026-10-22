@@ -5,6 +5,8 @@ description: Infrastructure, CI and deployment of the UltraLove Catalog Shopify 
 
 # Lab infrastructure and deployment
 
+For the admin UI (routes, loaders/actions, workspace flow, shared components) and the theme/ storefront sections, see [app-ui-structure](../app-ui-structure/SKILL.md).
+
 ## Where it runs
 
 - Host: DigitalOcean droplet `ultralove-integration-lab`, `root@104.248.211.144` (no `~/.ssh/config` alias). Not WordPress dev/prod.
