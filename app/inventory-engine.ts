@@ -129,6 +129,13 @@ export const INVENTORY_SET_MUTATION = `mutation SyncInventoryStock($input:Invent
   }
 }`;
 
+// The time of each product's last verified stock check, read by the theme's product page.
+export const CHECKED_NAMESPACE = "ultralove";
+export const CHECKED_KEY = "inventory_checked_at";
+export const INVENTORY_CHECKED_MUTATION = `mutation SyncInventoryChecked($metafields:[MetafieldsSetInput!]!) {
+  metafieldsSet(metafields:$metafields) { userErrors { field message } }
+}`;
+
 async function request(api: GraphQL, query: string, variables: Record<string, unknown>) {
   const response = object(await api(query, variables));
   if (response.errors !== undefined && list(response.errors).length) {

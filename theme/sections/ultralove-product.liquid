@@ -3,7 +3,8 @@
   (/products/<handle>?view=ultralove). The gallery has a main image with arrows and
   swipe, a thumbnail strip, and an enlarge dialog. One select per option picks the
   variant; the price, SKU, stock, add-to-cart state and gallery image follow the
-  selected variant. Products with only the default variant show no picker.
+  selected variant. Products with only the default variant show no picker. "Stock checked" is
+  the time of the app's last verified sync, from the metafield ultralove.inventory_checked_at.
 {%- endcomment -%}
 {%- liquid
   assign current = product.selected_or_first_available_variant
@@ -91,6 +92,10 @@
       <dl class="ul-product__facts">
         <div><dt>SKU</dt><dd data-ul-sku>{{ current.sku | default: '—' | escape }}</dd></div>
         <div><dt>Stock</dt><dd data-ul-stock>{% render 'ultralove-stock', variant: current %}</dd></div>
+        {%- assign checked_at = product.metafields.ultralove.inventory_checked_at.value -%}
+        {%- if checked_at -%}
+          <div><dt>Stock checked</dt><dd>{{ checked_at | date: '%b %-d, %Y at %-I:%M %p %Z' }}</dd></div>
+        {%- endif -%}
       </dl>
 
       <div class="ul-product__buy">

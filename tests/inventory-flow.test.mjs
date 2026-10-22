@@ -50,7 +50,7 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
       for (const statement of sql.split(";").filter((part) => part.trim())) await db.$executeRawUnsafe(statement);
     }
     const { enableAllInventory, inventoryControl, inventoryScreen, runInventoryCycle, runInventoryBatch } = await server.ssrLoadModule("/app/inventory.server.ts");
-    const { INVENTORY_QUERY, INVENTORY_BATCH_QUERY, INVENTORY_SET_MUTATION } = await server.ssrLoadModule("/app/inventory-engine.ts");
+    const { INVENTORY_QUERY, INVENTORY_BATCH_QUERY, INVENTORY_SET_MUTATION, INVENTORY_CHECKED_MUTATION } = await server.ssrLoadModule("/app/inventory-engine.ts");
     const { CONTEXT_QUERY } = await server.ssrLoadModule("/app/import-engine.ts");
     const { feed, CatalogError } = await server.ssrLoadModule("/app/catalog.server.ts");
     const { markListingDeleted } = await server.ssrLoadModule("/app/listing-lifecycle.server.ts");
@@ -69,6 +69,7 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
     let inventoryRequests = 0;
     let contextRequests = 0;
     const mutationKeys = [];
+    const checkedTimes = new Map();
     const seed = async (id, sources) => {
       const run = id.toString(16).padStart(32, "0");
       const productId = `gid://shopify/Product/${id}`;
@@ -129,6 +130,14 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
         inventoryRequests++;
         assert.ok(variables.ids.length > 1 && variables.ids.length <= 5);
         return { data: { nodes: variables.ids.map((id) => inventoryPage(id, null, 25)) } };
+      }
+      if (query === INVENTORY_CHECKED_MUTATION) {
+        assert.ok(variables.metafields.length <= 25);
+        for (const field of variables.metafields) {
+          assert.deepEqual([field.namespace, field.key, field.type], ["ultralove", "inventory_checked_at", "date_time"]);
+          checkedTimes.set(field.ownerId, field.value);
+        }
+        return { data: { metafieldsSet: { userErrors: [] } } };
       }
       assert.equal(query, INVENTORY_SET_MUTATION, "no product/content/publication/order mutations are allowed");
       mutationRequests++;
@@ -202,6 +211,7 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
     state = await db.inventorySync.findUniqueOrThrow({ where: { shop_supplierId: { shop, supplierId: 100 } } });
     assert.equal(state.status, "SYNCED");
     assert.equal(state.cursor, 9);
+    assert.equal(checkedTimes.get("gid://shopify/Product/100"), state.lastSuccessAt.toISOString(), "the product page gets the verified check time");
     assert.equal(state.pending, null);
     assert.equal(mutations, 1, "restart/retry does not apply an uncertain successful correction twice");
     assert.equal(mutationRequests, 1, "Shopify confirms the pending quantities without replaying an already-applied write");

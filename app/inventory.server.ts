@@ -6,7 +6,7 @@ import { CatalogError, inventoryStates } from "./catalog.server";
 import { payload, shopContext } from "./import-engine";
 import type { GraphQL } from "./import-engine";
 import {
-  checkpoint, INVENTORY_INTERVAL, INVENTORY_PRODUCT_BATCH_SIZE, inventoryFeed, InventoryError, InventoryMutationError, InventoryProductMissingError,
+  CHECKED_KEY, CHECKED_NAMESPACE, checkpoint, INVENTORY_CHECKED_MUTATION, INVENTORY_INTERVAL, INVENTORY_PRODUCT_BATCH_SIZE, inventoryFeed, InventoryError, InventoryMutationError, InventoryProductMissingError,
   mappings, remoteInventory, remoteInventories, setStock, stockOperation, stockPlan, verifyMappings,
 } from "./inventory-engine";
 import type { InventoryFeed, InventoryRead, Mapping, RemoteInventory, StockOperation } from "./inventory-engine";
@@ -417,6 +417,7 @@ export async function runInventoryBatch(shop: string, supplierIds: number[], api
       }
     }
     const verify: InventoryWork[] = [];
+    const checked: Record<string, string>[] = [];
     for (const item of ready) if (item.plan && item.feed && await allowed(item)) verify.push(item);
     await read(verify, location);
     for (const item of verify) {
@@ -426,8 +427,15 @@ export async function runInventoryBatch(shop: string, supplierIds: number[], api
         await fail(item, new InventoryError("Shopify on-hand stock changed during verification. The checkpoint was not advanced; the next cycle will reconcile."));
         continue;
       }
+      const checkedAt = new Date();
       await db.inventorySync.updateMany({ where: guard(item), data: { generation: item.feed.generation, cursor: item.feed.cursor,
-        lastSuccessAt: new Date(), status: item.plan.warnings.length ? "REVIEW" : "SYNCED", error: item.plan.warnings.join(" ") || null } });
+        lastSuccessAt: checkedAt, status: item.plan.warnings.length ? "REVIEW" : "SYNCED", error: item.plan.warnings.join(" ") || null } });
+      checked.push({ ownerId: item.saved.productId, namespace: CHECKED_NAMESPACE, key: CHECKED_KEY, type: "date_time",
+        value: checkedAt.toISOString() });
+    }
+    // Stock is already verified and saved, so a failed write here only leaves the product page's "last checked" time stale.
+    for (let offset = 0; offset < checked.length; offset += 25) {
+      await api(INVENTORY_CHECKED_MUTATION, { metafields: checked.slice(offset, offset + 25) }).catch(() => null);
     }
   } catch (error) {
     for (const item of work) if (!item.failed) await fail(item, error);
