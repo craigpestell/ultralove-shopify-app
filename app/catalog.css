@@ -126,9 +126,11 @@
 .workspace .catalog-table pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 60ch; font: inherit; }
 .workspace .catalog-table dd { margin: 8px 0 16px; }
 .job-history { list-style: none; margin: 0; padding: 0; }
-.job-history li { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--workspace-border); padding: 16px 10px; gap: 16px; }
-.job-history a { flex: 1; text-decoration: none; color: #303030; }
-.job-history a.pending-link { display: block; }
+.job-history li { border-top: 1px solid var(--workspace-border); }
+.job-history a.pending-link { display: flex; align-items: center; gap: 16px; padding: 16px 10px; text-decoration: none; color: #303030; }
+.job-history-summary { flex: 1; }
+.job-history-view { color: #005bd3; text-decoration: underline; text-underline-offset: 3px; }
+.job-history a:hover { background: #f1f2f3; }
 .job-history a:hover strong { text-decoration: underline; }
 .job-history .is-selected { background: #f2f7ff; }
 .inventory-overview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0 0 20px; gap: 12px; }

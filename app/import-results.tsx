@@ -163,9 +163,9 @@ export default function ImportResults({ job, history, ids, markup, markups, fulf
     {mode === "imports" && <section className="workspace-panel" aria-labelledby="history-heading">
       <div className="catalog-toolbar"><h2 id="history-heading">Recent activity</h2><span>Latest 10 previews and imports</span></div>
       {history.length ? <ul className="job-history">{history.map((entry) => <li key={entry.id} className={job?.id === entry.id ? "is-selected" : undefined}>
-        <PendingLink to={jobHref(entry.id)}><strong>{entry.total} product{entry.total === 1 ? "" : "s"} · {statusLabel(entry.status)}</strong>
-          <small>{timestamp(entry.createdAt)} · {entry.status === "PREVIEW" ? "Review before importing" : `${entry.completed}/${entry.total} completed`} · {entry.markup}% default markup</small></PendingLink>
-        <span aria-hidden="true">View</span>
+        <PendingLink to={jobHref(entry.id)}><span className="job-history-summary"><strong>{entry.total} product{entry.total === 1 ? "" : "s"} · {statusLabel(entry.status)}</strong>
+          <small>{timestamp(entry.createdAt)} · {entry.status === "PREVIEW" ? "Review before importing" : `${entry.completed}/${entry.total} completed`} · {entry.markup}% default markup</small></span>
+          <span className="job-history-view" aria-hidden="true">View</span></PendingLink>
       </li>)}</ul> : <div className="workspace-empty"><h2>Your imports will appear here</h2><p>Start by selecting supplier products. You’ll review exact prices before importing.</p><PendingLink className="workspace-primary" to={catalogHref}>Browse catalog</PendingLink></div>}
     </section>}
   </div>;
