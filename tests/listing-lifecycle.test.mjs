@@ -106,9 +106,9 @@ test("deleted listings are retained, stopped, archived and explicitly recoverabl
     assert.equal(screen.find(item => item.supplierId === 100).status, "DELETED");
     assert.equal(screen.find(item => item.supplierId === 100).markup, "40.00");
 
-    const render = async (search = "") => {
+    const render = async (search = "", release = null) => {
       const handler = createStaticHandler([{ id: "inventory", path: "/app/inventory", loader, Component: () =>
-        createElement(WorkspaceProvider, { shop, saved: { selected: [], markup: "0", markups: {} } }, createElement(Inventory)) }]);
+        createElement(WorkspaceProvider, { shop, saved: { selected: [], markup: "0", markups: {} }, release }, createElement(Inventory)) }]);
       const context = await handler.query(new Request(`https://fixture.example/app/inventory${search}`));
       return renderToStaticMarkup(createElement(StaticRouterProvider, { context, router: createStaticRouter(handler.dataRoutes, context) }));
     };
@@ -119,6 +119,9 @@ test("deleted listings are retained, stopped, archived and explicitly recoverabl
     assert.match(current, /<strong>1<\/strong> Current imported products/);
     assert.match(current, /<strong>3<\/strong> Deleted \/ archived/);
     assert.doesNotMatch(current, /Enable inventory sync for all/);
+    assert.match(current, /Integration lab · CAD · <span>development<\/span>/, "development shows no release");
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    assert.match(await render("", sha), new RegExp(`<span title="Running release ${sha}">0123456</span>`), "header shows the running release");
     const archived = await render("?filter=deleted");
     const archivedBody = archived.match(/<tbody>([\s\S]*?)<\/tbody>/)[1];
     assert.doesNotMatch(archivedBody, /Product 400|Open in Shopify|Enable inventory sync|Sync now|Pause sync/);

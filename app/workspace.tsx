@@ -6,10 +6,13 @@ import type { Configuration, Draft } from "./workspace-policy";
 import { defaultListingPolicy } from "./listing-policy";
 import { PendingLink } from "./network-state";
 
-type Workspace = { draft: Draft; setDraft: Dispatch<SetStateAction<Draft>>; storageAvailable: boolean };
+// release is the full commit SHA the lab is running, or null outside a lab release (development).
+type Workspace = { draft: Draft; setDraft: Dispatch<SetStateAction<Draft>>; storageAvailable: boolean; release: string | null };
 const Context = createContext<Workspace | null>(null);
 
-export function WorkspaceProvider({ shop, saved, children }: { shop: string; saved: Configuration; children: ReactNode }) {
+export function WorkspaceProvider({ shop, saved, release, children }: {
+  shop: string; saved: Configuration; release?: string | null; children: ReactNode;
+}) {
   const [draft, setDraft] = useState<Draft>(() => ({
     ...saved, baseline: signature(saved), products: {}, browse: "", active: false, publish: false, listingPolicy: defaultListingPolicy(),
     selectionSearch: "", selectionPage: 1,
@@ -41,7 +44,7 @@ export function WorkspaceProvider({ shop, saved, children }: { shop: string; sav
   useBeforeUnload((event) => {
     if (!storageAvailable && signature(draft) !== draft.baseline) { event.preventDefault(); event.returnValue = ""; }
   });
-  return <Context.Provider value={{ draft, setDraft, storageAvailable }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ draft, setDraft, storageAvailable, release: release ?? null }}>{children}</Context.Provider>;
 }
 
 export function useWorkspace() {
@@ -51,7 +54,7 @@ export function useWorkspace() {
 }
 
 export function WorkspaceNav({ current }: { current: string }) {
-  const { draft } = useWorkspace();
+  const { draft, release } = useWorkspace();
   const { search } = useLocation();
   return <nav className="workspace-nav" aria-label="UltraLove workspace">
     {[
@@ -59,6 +62,7 @@ export function WorkspaceNav({ current }: { current: string }) {
       ["imports", "Imports"], ["inventory", "Inventory"], ["settings", "Settings"],
     ].map(([view, label]) => <PendingLink key={view} aria-current={current === view || (current === "review" && view === "selection") ? "page" : undefined}
       to={workspaceHref(search, view, draft.browse)} pendingLabel={`Loading ${label}`}>{label}</PendingLink>)}
-    <span className="workspace-lab">Integration lab · CAD</span>
+    <span className="workspace-lab">Integration lab · CAD · <span title={release ? `Running release ${release}` : undefined}>
+      {release ? release.slice(0, 7) : "development"}</span></span>
   </nav>;
 }
