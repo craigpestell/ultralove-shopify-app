@@ -34,6 +34,31 @@ test("unbounded, variant-only and invalid product responses fail explicitly", as
   await assert.rejects(productsPage({}, async () => ({products: [], has_more: "yes"})));
 });
 
+test("wholesale-only products (testers, displays) are left out of catalog pages and counted", async () => {
+  const result = await productsPage({}, async () => ({ ...page([product, { ...product, id: 2, wholesale_only: true },
+    { ...product, id: 3, wholesale_only: false }]), next_after_id: 3, has_more: true }));
+  assert.deepEqual(result.products.map((item) => item.id), [1, 3]);
+  assert.equal(result.hidden, 1);
+  assert.equal(result.next_after_id, 3, "paging continues after hidden products");
+  const flaggedOnly = await productsPage({}, async () => page([{ ...product, wholesale_only: true }]));
+  assert.deepEqual([flaggedOnly.products, flaggedOnly.hidden], [[], 1]);
+  assert.equal((await productsPage({}, async () => page([product]))).hidden, 0, "feeds before 1.3 hide nothing");
+  for (const wholesale_only of [null, "yes", 1]) {
+    await assert.rejects(productsPage({}, async () => page([{ ...product, wholesale_only }])), CatalogError);
+  }
+});
+
+test("selections with wholesale-only products cannot be saved, and summaries mark them", async () => {
+  const summaries = [{ id: 1, name: "T-1 Tester", sku: "T-1", price: "0", type: "simple", wholesale_only: true },
+    { id: 2, name: "SKU-2 Product", sku: "SKU-2", price: "12.50", type: "simple", wholesale_only: false }];
+  await assert.rejects(validateSelection([1, 2], async () => ({ ids: [1, 2], products: summaries })),
+    (error) => error instanceof CatalogError && /wholesale-only/.test(error.message) && /T-1 Tester/.test(error.message) && !/SKU-2/.test(error.message));
+  await validateSelection([2], async () => ({ ids: [2], products: [summaries[1]] }));
+  const result = await selectedProducts([1, 2], async () => ({ ids: [1, 2], products: summaries }));
+  assert.deepEqual(result, [{ id: 1, name: "T-1 Tester", sku: "T-1", price: "0", type: "simple", wholesaleOnly: true },
+    { id: 2, name: "SKU-2 Product", sku: "SKU-2", price: "12.50", type: "simple" }]);
+});
+
 test("category browsing remains bounded and retains real supplier IDs", async () => {
   const result = await categoriesPage(50, async (request) => {
     assert.deepEqual(request, {operation: "categories", filters: {after_id: 50}});
@@ -183,6 +208,9 @@ test("restricted inventory transport accepts only bounded structured rate-limit 
         error instanceof CatalogError && error.retryAfter === delay &&
         (delay === null ? /unavailable/.test(error.message) : /3600 seconds/.test(error.message)));
     }
+    output = '{"error":{"status":409,"code":"WHOLESALE_ONLY"}}';
+    await assert.rejects(importPlan([68951], "gid://shopify/Location/1", "a".repeat(32), "25.00"), (error) =>
+      error instanceof CatalogError && error.retryAfter === null && /wholesale-only/.test(error.message) && /nothing was imported/.test(error.message));
     output = '{"error":{"status":409,"code":"SELECTED_PRODUCT_UNAVAILABLE"}}';
     for (const operation of [
       () => selectedProducts([68951]),

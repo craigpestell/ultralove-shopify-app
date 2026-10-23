@@ -7,7 +7,9 @@ import { fulfillmentModes, fulfillmentSignature } from "./fulfillment-policy";
 import type { FulfillmentModes } from "./fulfillment-policy";
 
 export type Configuration = { selected: number[]; markup: string; markups: MarkupOverrides; fulfillmentModes?: FulfillmentModes };
-export type ProductSummary = { id: number; name: string; sku: string; price: string | null; type: string };
+/** Shown beside a selected product that UltraLove flags as a tester, display or other store-only item. */
+export const WHOLESALE_ONLY_NOTE = "Wholesale only (tester or display): remove before importing";
+export type ProductSummary = { id: number; name: string; sku: string; price: string | null; type: string; wholesaleOnly?: boolean };
 export type Draft = Configuration & {
   baseline: string; products: Record<string, ProductSummary>; browse: string; active: boolean; publish: boolean;
   listingPolicy: ListingPolicy;

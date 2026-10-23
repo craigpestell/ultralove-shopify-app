@@ -3,7 +3,7 @@
 // is a breaking change: imports and inventory sync stop instead of writing bad data.
 export const SUPPORTED_MAJOR = 1;
 // The newest version this app was written against; newer minors are fine.
-export const KNOWN_VERSION = "1.2";
+export const KNOWN_VERSION = "1.3";
 export const SUPPORTED_RANGE = `${SUPPORTED_MAJOR}.x (written for ${KNOWN_VERSION})`;
 
 export const FEED_VERSION_RESULTS = ["compatible", "newer-minor", "unversioned", "unsupported", "invalid", "unavailable"] as const;

@@ -1093,6 +1093,29 @@ a check. Inventory sync reuses a check younger than a minute. When the feed's
 major version changes, update `SUPPORTED_MAJOR` and `KNOWN_VERSION` with the
 code that reads the new feed.
 
+### Wholesale-only products (testers, displays)
+
+Feed 1.3 adds `wholesale_only` (ultralove PR #373). UltraLove staff set it on
+testers, display kits, demo units and other products sold to stores only, after
+reviewing the candidates from ultralove `ops/wholesale-only/audit.php`. The
+products stay in the feed, so the app can say why it leaves them out:
+
+- **Catalog** pages drop them and say how many were hidden, so a page can show
+  fewer than 50 products. Paging is unchanged.
+- **Selection**: saving a selection that holds one fails and names it, and
+  selection details mark it "Wholesale only". The proxy's `import-plan` refuses
+  a flagged product (`409 WHOLESALE_ONLY`), and WordPress `payload()` refuses it
+  too, so no preview or import can include one.
+- **Already imported**: inventory sync sets the listing's stock to zero and
+  moves it to review with a note to archive or delete the Shopify listing. The
+  app does not archive or delete anything itself.
+
+A feed before 1.3 omits the field and nothing is hidden. Deploy the matching
+`ops/catalog-proxy.php` (it adds the flag to `selection` summaries and the
+`WHOLESALE_ONLY` error) together with this release; an older proxy still works,
+but selection saves can't name flagged products and import planning reports
+a generic supplier failure.
+
 ## Bulk inventory enrollment and cross-product batches
 
 Release `b6a2af4` adds **Enable inventory sync for all** to Inventory. Its required

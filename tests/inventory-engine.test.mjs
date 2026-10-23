@@ -39,6 +39,16 @@ test("withdrawn, shared, unmanaged, unknown and out-of-stock quantities never be
   assert.match(variants.warnings.join(" "), /New supplier variants/);
   assert.match(variants.warnings.join(" "), /101 is unavailable/);
 });
+test("wholesale-only products (testers, displays) keep zero stock and ask for the listing to be retired", () => {
+  assert.equal(inventoryFeed(source, 100, null).wholesale_only, false, "feeds before 1.3 omit the flag");
+  const flagged = stockPlan(current, inventoryFeed({ ...source, wholesale_only: true }, 100, null), location);
+  assert.equal(flagged.desired[0].quantity, 0);
+  assert.match(flagged.warnings.join(" "), /wholesale-only/);
+  assert.match(flagged.warnings.join(" "), /Archive or delete the Shopify listing/);
+  const unflagged = stockPlan(current, inventoryFeed({ ...source, wholesale_only: false }, 100, null), location);
+  assert.equal(unflagged.desired[0].quantity, 7);
+  for (const wholesale_only of [null, "true", 1]) assert.throws(() => inventoryFeed({ ...source, wholesale_only }, 100, null));
+});
 test("malformed stock, identities and checkpoints fail explicitly instead of implying withdrawal", () => {
   for (const change of [
     { cursor: -1 }, { parent_id: 999 }, { inventory: [{ ...stock, stock_quantity: 1.5 }] },

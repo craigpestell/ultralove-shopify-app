@@ -63,6 +63,8 @@ try {
                 'products' => array_map( static fn( $product ) => array(
                     'id' => $product['id'], 'name' => $product['name'], 'sku' => $product['sku'],
                     'price' => $product['price'], 'type' => $product['type'],
+                    // Feed 1.3: testers, displays and other store-only products; older feeds omit it.
+                    'wholesale_only' => ( $product['wholesale_only'] ?? false ) === true,
                 ), $parents ),
             );
             break;
@@ -97,6 +99,9 @@ try {
             $items = array();
             foreach ( $request['ids'] as $id ) {
                 $record = $feed['products'][$id];
+                if ( ( $record['wholesale_only'] ?? false ) === true ) {
+                    throw new RuntimeException( 'Wholesale-only product selected; no import planned.' );
+                }
                 $payload = UltraLove_Shopify_Catalog_Import::payload( $record, $feed['products'],
                     $request['location'], $request['run'], (float) $request['markup'] );
                 $wholesale = array();
@@ -114,7 +119,9 @@ try {
     }
     echo json_encode( $result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES ) . "\n";
 } catch ( RuntimeException | InvalidArgumentException | JsonException $error ) {
-    if ( $error->getMessage() === 'Selected product/variation is missing or unavailable; no partial import.' ) {
+    if ( $error->getMessage() === 'Wholesale-only product selected; no import planned.' ) {
+        echo json_encode( array( 'error' => array( 'status' => 409, 'code' => 'WHOLESALE_ONLY' ) ), JSON_THROW_ON_ERROR ) . "\n";
+    } elseif ( $error->getMessage() === 'Selected product/variation is missing or unavailable; no partial import.' ) {
         echo json_encode( array( 'error' => array( 'status' => 409, 'code' => 'SELECTED_PRODUCT_UNAVAILABLE' ) ), JSON_THROW_ON_ERROR ) . "\n";
     } elseif ( $error->getCode() === 429 && preg_match( '/; retry after ([0-9]+) seconds/', $error->getMessage(), $matches )
         && (int) $matches[1] > 0 && (int) $matches[1] <= 2147483647 ) {
