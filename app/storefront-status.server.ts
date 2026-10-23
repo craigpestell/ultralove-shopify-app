@@ -1,5 +1,5 @@
 import db from "./db.server";
-import { assertLabShop } from "./lab-policy.server";
+import { assertShopDomain } from "./shop-policy.server";
 import { record } from "./import-engine";
 import type { GraphQL } from "./import-engine";
 import { STATUS_KEY, STATUS_NAMESPACE, importStatus } from "./storefront-status";
@@ -20,7 +20,7 @@ function variantCount(payload: string) {
 }
 
 export async function importStatusSnapshot(shop: string, now = new Date()) {
-  assertLabShop(shop);
+  assertShopDomain(shop);
   const [jobs, syncs, claims, items] = await Promise.all([
     db.importJob.findMany({ where: { shop, status: { not: "PREVIEW" } }, orderBy: { createdAt: "desc" }, take: HISTORY_JOBS,
       include: { items: { orderBy: { supplierId: "asc" } } } }),

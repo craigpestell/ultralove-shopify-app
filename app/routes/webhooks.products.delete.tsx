@@ -1,12 +1,12 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
-import { assertLabShop } from "../lab-policy.server";
+import { assertShopDomain } from "../shop-policy.server";
 import { deletedProductId, markListingDeleted } from "../listing-lifecycle.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const body = request.clone();
   const { shop, topic } = await authenticate.webhook(request);
-  assertLabShop(shop);
+  assertShopDomain(shop);
   if (topic !== "PRODUCTS_DELETE") throw new Response("Unexpected webhook topic.", { status: 400 });
   // Keep numeric Shopify IDs exact even beyond JavaScript's safe integer range.
   const payload: unknown = JSON.parse(await body.text(), (key, value: unknown, context?: { source: string }) =>

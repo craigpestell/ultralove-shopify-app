@@ -41,7 +41,7 @@ test("client navigations to Catalog reuse cached feed pages and never cache fail
       load(id) {
         if (id.endsWith("/app/shopify.server.ts")) return `
           export const auth = { reject: false };
-          export async function authenticateLabAdmin() {
+          export async function authenticateRetailer() {
             if (auth.reject) throw new Response("Forbidden", {status:403});
             return {session:{shop:${JSON.stringify(shop)}}};
           }`;

@@ -121,14 +121,22 @@ model InventorySync {
   @@index([shop, enabled, nextRunAt])
 }
 
-// Host-wide settings for the integration lab, kept in one row. The lab's pull-deploy
-// script reads autoUpdates directly from SQLite, so keep the table and column names stable.
-// inventoryPaused stops the worker starting inventory sync cycles for every product.
+// Host-wide settings, kept in one row. The lab's pull-deploy script reads autoUpdates
+// directly from SQLite, so keep the table and column names stable. inventoryPaused is
+// no longer read: each store's pause lives in ShopSettings.
 model AppSettings {
   id          String   @id @default("lab")
   autoUpdates Boolean  @default(true)
   inventoryPaused Boolean @default(false)
   updatedAt   DateTime @updatedAt
+}
+
+// Per-store settings. inventoryPaused stops the worker starting inventory sync cycles
+// for every product of that store.
+model ShopSettings {
+  shop            String   @id
+  inventoryPaused Boolean  @default(false)
+  updatedAt       DateTime @updatedAt
 }
 
 // The latest supplier feed schema version check, kept in one row. Imports and inventory sync

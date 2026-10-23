@@ -18,7 +18,7 @@ test("deleted listings are retained, stopped, archived and explicitly recoverabl
       if (id.endsWith("/app/shopify.server.ts")) return `
         export const auth = { shop: "ultralove-integration-lab.myshopify.com", payload: {id:100}, topic:"PRODUCTS_DELETE", rejected:false };
         export const authenticate = {webhook:async()=>{if(auth.rejected)throw new Response("Unauthorized",{status:401});return auth;}};
-        export async function authenticateLabAdmin(){return {session:{shop:auth.shop}};}
+        export async function authenticateRetailer(){return {session:{shop:auth.shop}};}
       `;
     } }],
   });
@@ -165,7 +165,7 @@ test("deleted listings are retained, stopped, archived and explicitly recoverabl
     const archivedOnly = await render();
     assert.match(archivedOnly, /No current imported products/);
     assert.match(archivedOnly, /View deleted \/ archived products/);
-    await assert.rejects(markListingDeleted("unrelated.myshopify.com", productId(401)));
+    await assert.rejects(markListingDeleted("unrelated.example", productId(401)), "store identifiers must be myshopify.com domains");
 
     for (let id = 500; id < 560; id++) await seed(id);
     let bounded = 0;

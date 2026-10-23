@@ -77,7 +77,7 @@ const server = await createServer({
         import "/app/catalog.css";
         function Workspace(){const data=useLoaderData();return React.createElement(WorkspaceProvider,{shop,saved:data.saved},React.createElement(Outlet));}
         createRoot(document.getElementById("root")).render(React.createElement(RouterProvider,{router:createBrowserRouter([{path:"/app",Component:Workspace,loader:async()=>({saved}),children:[{index:true,Component:Index,loader,action},{path:"selection-details",loader:detailsLoader},{path:"inventory",Component:Inventory,loader:inventoryLoader,action:inventoryAction}]}])}));`;
-      if (id.endsWith("/app/shopify.server.ts")) return `import {shop} from "virtual:ux-state";export const authenticateLabAdmin=async()=>({session:{shop},admin:{graphql:async()=>{throw new Error("Live Shopify API disabled in fixture");}}});`;
+      if (id.endsWith("/app/shopify.server.ts")) return `import {shop} from "virtual:ux-state";export const authenticateRetailer=async()=>({session:{shop},admin:{graphql:async()=>{throw new Error("Live Shopify API disabled in fixture");}}});`;
       if (id.endsWith("/app/db.server.ts")) return `import {save} from "virtual:ux-state";export default {catalogSelection:{upsert:async input=>save(input.update)}};`;
       if (id.endsWith("/app/imports.server.ts")) return `import {screen,preview,queue} from "virtual:ux-state";
         export class ImportError extends Error {}

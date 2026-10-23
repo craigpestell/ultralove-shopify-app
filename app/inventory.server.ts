@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { InventorySync } from "@prisma/client";
 import db from "./db.server";
-import { assertLabShop } from "./lab-policy.server";
+import { assertShopDomain } from "./shop-policy.server";
 import { CatalogError, inventoryStates } from "./catalog.server";
 import { payload, shopContext } from "./import-engine";
 import type { GraphQL } from "./import-engine";
@@ -16,7 +16,7 @@ import { markupPercent } from "./pricing-policy";
 import { feedVersionGate } from "./feed-version.server";
 
 export async function inventoryScreen(shop: string) {
-  assertLabShop(shop);
+  assertShopDomain(shop);
   const [claims, items, states] = await Promise.all([
     db.importClaim.findMany({ where: { shop, productId: { not: null } }, orderBy: { supplierId: "asc" } }),
     db.importItem.findMany({ where: { job: { shop }, status: { in: ["CREATED", "REUSED", "UPDATED", "LINKED"] }, productId: { not: null } },
@@ -48,7 +48,7 @@ export async function inventoryScreen(shop: string) {
 }
 
 export async function inventoryControl(shop: string, supplierId: number, intent: string, api: GraphQL, confirmation?: string) {
-  assertLabShop(shop);
+  assertShopDomain(shop);
   if (!Number.isInteger(supplierId) || supplierId < 1 || supplierId > 2147483647) throw new InventoryError("Invalid supplier inventory product.");
   if (intent !== "pause") {
     const claim = await db.importClaim.findUnique({ where: { shop_supplierId: { shop, supplierId } } });
@@ -136,7 +136,7 @@ async function enableInventory(shop: string, supplierId: number, api: GraphQL,
 }
 
 export async function enableAllInventory(shop: string, api: GraphQL, confirmation: string) {
-  assertLabShop(shop);
+  assertShopDomain(shop);
   if (confirmation !== "inventory-all-current") throw new InventoryError("Confirm inventory-only sync for all currently imported eligible products.");
   const products = (await inventoryScreen(shop)).filter((product) => !product.deletedAt);
   const result = { total: products.length, enabled: 0, alreadyEnabled: 0, error: null as string | null,
@@ -221,7 +221,7 @@ export async function runInventoryCycle(shop: string, supplierId: number, api: G
 }
 
 export async function runInventoryBatch(shop: string, supplierIds: number[], api: GraphQL, stopping = () => false) {
-  assertLabShop(shop);
+  assertShopDomain(shop);
   if (!supplierIds.length || supplierIds.length > INVENTORY_PRODUCT_BATCH_SIZE ||
       supplierIds.some((id) => !Number.isInteger(id) || id < 1 || id > 2147483647) ||
       new Set(supplierIds).size !== supplierIds.length) throw new InventoryError("Schedule 1-5 distinct inventory products per cycle.");

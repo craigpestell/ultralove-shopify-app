@@ -4,12 +4,11 @@ import { Form, useActionData, useLoaderData } from "react-router";
 
 import { login } from "../../shopify.server";
 import { loginErrorMessage } from "./error.server";
-import { LAB_SHOP } from "../../lab-policy.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const errors = loginErrorMessage(await login(request));
 
-  return { errors, shop: LAB_SHOP };
+  return { errors, shop: "" };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {

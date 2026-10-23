@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs, ClientLoaderFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
 import { data, redirect, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { authenticateLabAdmin } from "../shopify.server";
+import { authenticateRetailer } from "../shopify.server";
 import db from "../db.server";
 import { browseFilters, selectionIds } from "../catalog-policy";
 import { CatalogError, validateSelection } from "../catalog.server";
@@ -18,7 +18,7 @@ import { listingInput } from "../workspace-policy";
 import { FulfillmentError, fulfillmentModes } from "../fulfillment-policy";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticateLabAdmin(request);
+  const { session } = await authenticateRetailer(request);
   const url = new URL(request.url);
   const jobs = url.searchParams.getAll("job");
   if (jobs.length > 1 || (jobs.length && !/^[a-f0-9]{32}$/.test(jobs[0]))) throw new Response("Invalid import job identifier.", { status: 400 });
@@ -78,7 +78,7 @@ export const clientLoader = async ({ request, serverLoader }: ClientLoaderFuncti
 clientLoader.hydrate = true as const;
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session, admin } = await authenticateLabAdmin(request);
+  const { session, admin } = await authenticateRetailer(request);
   const form = await request.formData();
   const url = new URL(request.url);
   const destination = (job?: string, view = "review") => {

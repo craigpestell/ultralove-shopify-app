@@ -1,13 +1,13 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { data } from "react-router";
-import { authenticateLabAdmin } from "../shopify.server";
+import { authenticateRetailer } from "../shopify.server";
 import { CATALOG_BATCH_SIZE, selectionIds } from "../catalog-policy";
 import { CatalogError, selectedProducts } from "../catalog.server";
 
 const headers = { "Cache-Control": "no-store" };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticateLabAdmin(request);
+  await authenticateRetailer(request);
   let ids: number[];
   try {
     const values = new URL(request.url).searchParams.getAll("ids");
