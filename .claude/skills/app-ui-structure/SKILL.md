@@ -22,6 +22,7 @@ Routes are file based (`app/routes.ts` is `flatRoutes()`), so a file's name is i
 | `routes/app.inventory.tsx` | `/app/inventory` | Inventory sync enrollment and deleted-listing recovery. Loader, action and component in one file. |
 | `routes/app.imports.tsx` | `/app/imports` | Legacy: loader redirects to `/app?view=imports`; action delegates to `app._index`'s action so old forms and bookmarks still work. |
 | `routes/app.selection-details.ts` | `/app/selection-details?ids=[…]` | Resource route (no component) used by a fetcher to load names/SKUs/prices for up to 50 selected IDs. `Cache-Control: no-store`. |
+| `routes/app.catalog-feed.ts` | `/app/catalog-feed?search&category_id&after_id` | Resource route (no component): one supplier feed page plus categories for the workspace's client cache. 400 on bad filters, 502 on `CatalogError`, `Cache-Control: no-store`. |
 | `routes/webhooks.*.tsx` | `/webhooks/…` | `app/uninstalled`, `app/scopes_update` (declared in `shopify.app.toml`) and `products/delete` (registered per shop through the Admin API; marks the listing deleted). |
 
 ### Navigation
@@ -43,7 +44,9 @@ Always build in-app links with `workspaceHref` (or the workspace's local `href()
 
 - `importScreen` (`imports.server.ts`) gives the saved configuration (`selected`, `markup`, `markups`, `fulfillmentModes`), `job` (the full snapshot with items, prices, listing review, warnings, `confirmation` token) and `history` (latest 10 jobs).
 - For `view=review|imports` (or a `job` with no view) it skips the feed: `products`/`categories` are `null`.
-- Otherwise it calls `productsPage(filters)` and `allCategories()` (`catalog.server.ts`, over the SSH catalog proxy). A `CatalogError` returns status 502 with `error` set instead of throwing.
+- Only Catalog reads the feed (`browsesFeed` in `catalog-cache.ts`); Selection & pricing gets details from `selection-details` instead.
+- On a document load it calls `browseCatalog(filters)` (`catalog-browse.server.ts`: `productsPage` + `allCategories`, over the SSH catalog proxy). A `CatalogError` returns status 502 with `error` set instead of throwing.
+- On a client navigation (`Sec-Fetch-Dest: empty`) it returns `clientFeed: true` without the feed. The route's `clientLoader` (`hydrate = true`) fills it from an in-memory browser cache keyed by search/category/cursor (5 minutes, 20 pages; `catalog-cache.ts`) or from `/app/catalog-feed`. The server-rendered first page seeds the cache. Saved configuration, job and history always come from the server; errors are never cached.
 
 **Action**: one form endpoint switched by the `intent` field. Every field is read with `field(name)` (exactly one string value).
 

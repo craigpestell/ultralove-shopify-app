@@ -1,10 +1,13 @@
-import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
+import type { ActionFunctionArgs, ClientLoaderFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
 import { data, redirect, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticateLabAdmin } from "../shopify.server";
 import db from "../db.server";
 import { browseFilters, selectionIds } from "../catalog-policy";
-import { allCategories, CatalogError, productsPage, validateSelection } from "../catalog.server";
+import { CatalogError, validateSelection } from "../catalog.server";
+import { browseCatalog } from "../catalog-browse.server";
+import type { CatalogBrowse } from "../catalog-browse.server";
+import { browsesFeed, catalogCache, catalogKey } from "../catalog-cache";
 import { ImportError, importChoices, markupPercent } from "../import-engine";
 import { createPreview, importScreen, queueJob } from "../imports.server";
 import { markupOverrides, PricingError } from "../pricing-policy";
@@ -25,21 +28,54 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     if (!(error instanceof Error)) throw error;
     throw new Response(error.message, { status: 400 });
   }
-  // Categories load in full and sorted, so the legacy category_after cursor is ignored.
-  const productFilters = { search: filters.search, category_id: filters.category_id, after_id: filters.after_id };
   const screen = await importScreen(session.shop, jobs[0] || null);
-  if (["review", "imports"].includes(url.searchParams.get("view") || "") || (!url.searchParams.has("view") && jobs.length)) {
-    return { shop: session.shop, ...screen, filters, products: null, categories: null, error: null };
-  }
+  const result = { shop: session.shop, ...screen, filters, products: null, categories: null, error: null, clientFeed: false };
+  if (!browsesFeed(url.searchParams)) return result;
+  // Client-side navigations (fetch requests) get the feed from the browser cache or
+  // /app/catalog-feed instead; see clientLoader below. Document loads still render it here.
+  if (request.headers.get("Sec-Fetch-Dest") === "empty") return { ...result, clientFeed: true };
   try {
-    const [products, categories] = await Promise.all([productsPage(productFilters), allCategories()]);
-    return { shop: session.shop, ...screen, filters, products, categories, error: null };
+    return { ...result, ...(await browseCatalog(filters)) };
   } catch (error) {
     if (!(error instanceof CatalogError)) throw error;
     console.error("Catalog browsing failed.", error.message);
-    return data({ shop: session.shop, ...screen, filters, products: null, categories: null, error: error.message }, { status: 502 });
+    return data({ ...result, error: error.message }, { status: 502 });
   }
 };
+
+type Feed = { products: CatalogBrowse["products"] | null; categories: CatalogBrowse["categories"] | null; error: string | null };
+const feedCache = catalogCache<CatalogBrowse>();
+
+async function loadFeed(key: string, signal: AbortSignal): Promise<Feed> {
+  const cached = feedCache.get(key);
+  if (cached) return { ...cached, error: null };
+  let body: Feed;
+  try {
+    const response = await fetch(`/app/catalog-feed${key ? `?${key}` : ""}`, { signal, headers: { Accept: "application/json" } });
+    body = await response.json();
+    if (!response.ok && !body.error) throw new Error(`Catalog feed returned ${response.status}.`);
+  } catch (error) {
+    if (signal.aborted) throw error;
+    return { products: null, categories: null, error: "The supplier catalog could not be loaded. Try again." };
+  }
+  if (body.error || !body.products || !body.categories) return { products: null, categories: null, error: body.error };
+  feedCache.set(key, { products: body.products, categories: body.categories });
+  return body;
+}
+
+// Returning to the Catalog tab reuses the last feed pages for a few minutes instead of asking the
+// supplier again. Saved configuration, jobs and history still come from the server every time.
+export const clientLoader = async ({ request, serverLoader }: ClientLoaderFunctionArgs) => {
+  const key = catalogKey(new URL(request.url).searchParams);
+  const result = await serverLoader<typeof loader>();
+  if (result.products && result.categories) {
+    // Rendered on the server (the first page load): remember it for later visits.
+    feedCache.set(key, { products: result.products, categories: result.categories });
+    return result;
+  }
+  return result.clientFeed ? { ...result, ...(await loadFeed(key, request.signal)) } : result;
+};
+clientLoader.hydrate = true as const;
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticateLabAdmin(request);
