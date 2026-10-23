@@ -229,20 +229,27 @@ export async function remoteInventories(api: GraphQL, products: { supplierId: nu
   }
   return results;
 }
-export function verifyMappings(saved: Mapping[], current: RemoteInventory[]) {
-  if (JSON.stringify(mappings(saved)) !== JSON.stringify(mappings(current))) {
+// Retailers may delete variants they don't sell, so the listing can hold fewer variants than the saved
+// mapping. Every variant still there must match its saved identities exactly; anything else is a change.
+export function verifyMappings(saved: Mapping[], current: RemoteInventory[]): number[] {
+  const expected = new Map(mappings(saved).map((item) => [item.sourceId, JSON.stringify(item)]));
+  const actual = mappings(current);
+  if (actual.some((item) => expected.get(item.sourceId) !== JSON.stringify(
+    { sourceId: item.sourceId, variantId: item.variantId, inventoryItemId: item.inventoryItemId }))) {
     throw new InventoryError("Shopify variants or inventory identities changed. Pause sync and review the mapping; no stock was changed.");
   }
+  return [...expected.keys()].filter((id) => !actual.some((item) => item.sourceId === id));
 }
-export function stockPlan(current: RemoteInventory[], feed: InventoryFeed, locationId: string) {
+export function stockPlan(current: RemoteInventory[], feed: InventoryFeed, locationId: string, deleted: number[] = []) {
   gid(locationId, "Location");
   const warnings: string[] = [];
   if (!feed.published) warnings.push("Supplier product withdrawn: mapped stock is zero.");
   if (feed.published && feed.wholesale_only) {
     warnings.push("UltraLove marked this product wholesale-only (a tester, display or other store-only item), so it can't be dropshipped: stock is zero. Archive or delete the Shopify listing.");
   }
-  // Wholesale-only variants (testers, stands) are never imported, so they are not new variants to review.
-  const skipped = new Set(feed.inventory.filter((entry) => entry.wholesale_only).map((entry) => entry.id));
+  // Wholesale-only variants (testers, stands) are never imported, and variants the retailer deleted from
+  // their listing stay deleted, so neither is a new variant to review.
+  const skipped = new Set([...feed.inventory.filter((entry) => entry.wholesale_only).map((entry) => entry.id), ...deleted]);
   if (feed.source_ids.some((id) => !skipped.has(id) && !current.some((item) => item.sourceId === id))) {
     warnings.push("New supplier variants require a separate import/review; no variants were added.");
   }

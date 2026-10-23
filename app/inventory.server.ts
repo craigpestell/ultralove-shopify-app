@@ -95,7 +95,8 @@ async function enableInventory(shop: string, supplierId: number, api: GraphQL,
     throw error;
   }
   const verified = mappings(current);
-  if (JSON.stringify(sources) !== JSON.stringify(verified.map((item) => item.sourceId))) {
+  // The retailer may have deleted variants they don't sell; the rest must still be the imported ones.
+  if (verified.some((item) => !sources.includes(item.sourceId))) {
     throw new InventoryError("Imported and Shopify variant identities no longer match. Review before enrolling.");
   }
   const existing = await db.inventorySync.findUnique({ where: { shop_supplierId: { shop, supplierId } } });
@@ -187,6 +188,8 @@ export async function enableAllInventory(shop: string, api: GraphQL, confirmatio
 
 type InventoryWork = {
   saved: InventorySync; claimed: boolean; failed: boolean; expected: Mapping[];
+  /** Supplier variants the retailer deleted from the Shopify listing; they stay deleted. */
+  deleted: number[];
   current: RemoteInventory[] | null; feed: InventoryFeed | null; plan: ReturnType<typeof stockPlan> | null;
 };
 
@@ -243,7 +246,7 @@ export async function runInventoryBatch(shop: string, supplierIds: number[], api
       data: { status: "RUNNING", nextRunAt },
     })).count === 1;
     const item: InventoryWork = { saved: claimed ? { ...saved, status: "RUNNING", nextRunAt } : saved,
-      claimed, failed: false, expected: [], current: null, feed: null, plan: null };
+      claimed, failed: false, expected: [], deleted: [], current: null, feed: null, plan: null };
     if (claimed || !due) work.push(item);
   };
   for (const supplierId of supplierIds) {
@@ -303,7 +306,7 @@ export async function runInventoryBatch(shop: string, supplierIds: number[], api
           try {
             if ("error" in result) throw result.error;
             item.expected = mappings(JSON.parse(item.saved.mappings));
-            verifyMappings(item.expected, result.inventory);
+            item.deleted = verifyMappings(item.expected, result.inventory);
             item.current = result.inventory;
           } catch (error) { await fail(item, error); }
         }
@@ -383,7 +386,7 @@ export async function runInventoryBatch(shop: string, supplierIds: number[], api
           try {
             item.feed = inventoryFeed(feeds[index], item.saved.supplierId, requests[index].checkpoint);
             if (!item.current) throw new InventoryError("Shopify inventory was not verified before reading supplier stock.");
-            item.plan = stockPlan(item.current, item.feed, location);
+            item.plan = stockPlan(item.current, item.feed, location, item.deleted);
           } catch (error) { await fail(item, error); }
         }
       } catch (error) { for (const item of batch) await fail(item, error); }

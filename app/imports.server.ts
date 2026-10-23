@@ -11,7 +11,7 @@ import { markupOverrides, retailPrice } from "./pricing-policy";
 import type { MarkupOverrides } from "./pricing-policy";
 import { defaultListingPolicy, listingPolicy, listingSignature } from "./listing-policy";
 import type { ListingPolicy } from "./listing-policy";
-import { applyListing, assertLinkOwnership, listingChanges, listingSnapshot, matchListingVariants, supplierVariantIds } from "./listing-engine";
+import { applyListing, assertLinkOwnership, listedVariants, listingChanges, listingSnapshot, matchListingVariants, supplierVariantIds } from "./listing-engine";
 import type { ListingReview, ListingWork } from "./listing-engine";
 import { fulfillmentMode, fulfillmentModes, modeFor } from "./fulfillment-policy";
 import type { FulfillmentModes } from "./fulfillment-policy";
@@ -140,11 +140,19 @@ export async function createPreview(shop: string, markup: string, api: GraphQL, 
       else {
         assertLinkOwnership(snapshot, item.supplierId, expected);
         try {
+          const listed = listedVariants(snapshot, item.payload);
+          if (listed) {
+            item.payload = { ...item.payload, variants: listed.keep.map((index) => item.payload.variants[index]) };
+            item.wholesale = listed.keep.map((index) => item.wholesale[index]);
+          }
           work.variantIds = matchListingVariants(snapshot, item.payload, Boolean(policy.links[item.supplierId]));
           work.baseline = snapshot;
           listing.action = policy.links[item.supplierId] ? "LINK" : "UPDATE";
           listing.changes = listingChanges(snapshot, item.payload, policy, work.variantIds);
-          if (listing.action === "LINK") listing.message = "Associate supplier identities without changing handles, SKUs, stock or publication. Only separately selected fields will be refreshed.";
+          const notes = [];
+          if (listing.action === "LINK") notes.push("Associate supplier identities without changing handles, SKUs, stock or publication. Only separately selected fields will be refreshed.");
+          if (listed) notes.push(`Not on your Shopify listing, so left out: ${listed.missing.join(", ")}. Variants deleted in Shopify stay deleted, and the app can't add new UltraLove variants to an existing listing yet.`);
+          if (notes.length) listing.message = notes.join(" ");
         } catch (error) {
           if (!(error instanceof ImportError)) throw error;
           block(error.message);
