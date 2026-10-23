@@ -1110,6 +1110,16 @@ products stay in the feed, so the app can say why it leaves them out:
   moves it to review with a note to archive or delete the Shopify listing. The
   app does not archive or delete anything itself.
 
+Feed 1.4 (ultralove PR #375) also lets staff flag a single variation, such as
+a Tester beside retail colours, and reports `wholesale_only` on every inventory
+record:
+
+- **Imports** skip flagged variants and keep the retail ones. WordPress
+  `payload()` drops them, and refuses the product (`409 WHOLESALE_ONLY`) when
+  every variant is flagged.
+- **Already imported**: inventory sync sets the flagged variant's stock to zero
+  and asks for it to be deleted from the listing; other variants sync as usual.
+
 A feed before 1.3 omits the field and nothing is hidden. Deploy the matching
 `ops/catalog-proxy.php` (it adds the flag to `selection` summaries and the
 `WHOLESALE_ONLY` error) together with this release; an older proxy still works,

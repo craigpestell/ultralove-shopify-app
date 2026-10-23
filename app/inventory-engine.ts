@@ -21,6 +21,8 @@ export type Checkpoint = { generation: string; cursor: number };
 type SourceStock = {
   id: number; manage_stock: boolean; stock_quantity: number | null;
   stock_owner_id: number | null; stock_status: string;
+  /** Feed 1.4: this variant (e.g. a Tester beside retail colours) or its product is wholesale-only. */
+  wholesale_only: boolean;
 };
 export type InventoryFeed = Checkpoint & {
   parent_id: number; published: boolean; source_ids: number[]; inventory: SourceStock[]; resynced: boolean;
@@ -97,13 +99,14 @@ export function inventoryFeed(value: unknown, parentId: number, previous: Checkp
     if (!ids.includes(id) || typeof stock.manage_stock !== "boolean" ||
         !(stock.stock_quantity === null || typeof stock.stock_quantity === "number") ||
         !(stock.stock_owner_id === null || typeof stock.stock_owner_id === "number") ||
-        !["instock", "outofstock", "onbackorder"].includes(text(stock.stock_status))) {
+        !["instock", "outofstock", "onbackorder"].includes(text(stock.stock_status)) ||
+        !(stock.wholesale_only === undefined || typeof stock.wholesale_only === "boolean")) {
       throw new InventoryError("Supplier returned invalid or unexpected inventory.");
     }
     return { id, manage_stock: stock.manage_stock,
       stock_quantity: stock.stock_quantity === null ? null : integer(stock.stock_quantity),
       stock_owner_id: stock.stock_owner_id === null ? null : sourceId(stock.stock_owner_id),
-      stock_status: text(stock.stock_status) };
+      stock_status: text(stock.stock_status), wholesale_only: stock.wholesale_only === true };
   });
   if (inventory.length > ids.length || new Set(inventory.map((item) => item.id)).size !== inventory.length ||
       (!data.published && (ids.length || inventory.length))) throw new InventoryError("Supplier returned duplicate or withdrawn inventory records.");
@@ -248,6 +251,8 @@ export function stockPlan(current: RemoteInventory[], feed: InventoryFeed, locat
       if (feed.published) warnings.push(`Supplier variant ${item.sourceId} is unavailable: stock is zero.`);
     } else if (!stock.manage_stock || stock.stock_quantity === null || stock.stock_owner_id !== stock.id) {
       warnings.push(`Supplier variant ${item.sourceId} has unknown, unmanaged or shared stock: stock is zero until reviewed.`);
+    } else if (stock.wholesale_only && !feed.wholesale_only) {
+      warnings.push(`Supplier variant ${item.sourceId} is wholesale-only (a tester or display), so it can't be dropshipped: stock is zero. Delete this variant from the Shopify listing.`);
     } else if (stock.stock_status !== "outofstock" && !feed.wholesale_only) {
       quantity = Math.max(0, stock.stock_quantity);
     }
