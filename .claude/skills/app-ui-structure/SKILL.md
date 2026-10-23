@@ -7,7 +7,7 @@ description: Map of the UltraLove Catalog embedded admin UI (React Router + Pola
 
 The admin UI is a React Router 7 app (`@shopify/shopify-app-react-router`) embedded in the Shopify admin of the lab store only. It renders Polaris **web components** (`<s-page>`, `<s-button>`, `<s-banner>`, `<s-spinner>`) mixed with plain HTML styled by `app/catalog.css`. There is no Polaris React. For infrastructure, CI and deploys, see the sibling skill [lab-infrastructure-deploy](../lab-infrastructure-deploy/SKILL.md).
 
-Checked against `main` at `6bf59fc` (2026-10-22, after PR #26). No Settings page exists on `main` or in an open PR yet; if one lands, add it to the route map below.
+Checked against `main` at `6bf59fc` (2026-10-22, after PR #26); the Settings row was added 2026-10-23.
 
 ## Route map
 
@@ -19,6 +19,7 @@ Routes are file based (`app/routes.ts` is `flatRoutes()`), so a file's name is i
 | `routes/auth.login/route.tsx`, `routes/auth.$.tsx` | `/auth/*` | Shopify OAuth/login. `login()` in `shopify.server.ts` wraps it with `assertLabLogin`. |
 | `routes/app.tsx` | `/app` layout | Authenticates, loads `savedConfiguration(shop)`, mounts `AppProvider`, `AdminLoadingBar` and `WorkspaceProvider` around `<Outlet />`. Exports Shopify's `boundary` ErrorBoundary and headers. |
 | `routes/app._index.tsx` | `/app?view=…` | The **workspace**: Catalog, Selection & pricing, Review and Imports are one route switched by `?view=`. Default export is `CatalogWorkspace` from `app/catalog-workspace.tsx`. |
+| `routes/app.settings.tsx` | `/app/settings` | Settings, top to bottom: **App version and updates** (running release, last update check, `check-updates` intent = Check now, which polls until the lab answers; `auto-updates` switch), **Inventory sync** (`inventory-sync` pause switch and health facts) and **Supplier feed** (version facts from `FeedVersionCheck`, `check-catalog` and `check-feed-version` intents). A paused feed version also shows a critical banner at the top of the page. |
 | `routes/app.inventory.tsx` | `/app/inventory` | Inventory sync enrollment and deleted-listing recovery. Loader, action and component in one file. |
 | `routes/app.imports.tsx` | `/app/imports` | Legacy: loader redirects to `/app?view=imports`; action delegates to `app._index`'s action so old forms and bookmarks still work. |
 | `routes/app.selection-details.ts` | `/app/selection-details?ids=[…]` | Resource route (no component) used by a fetcher to load names/SKUs/prices for up to 50 selected IDs. `Cache-Control: no-store`. |

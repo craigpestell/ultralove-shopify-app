@@ -106,48 +106,63 @@ export default function Settings() {
   const toggle = (intent: string) => (event: ChangeEvent<HTMLInputElement>) =>
     submit({ intent, value: event.currentTarget.checked ? "on" : "off" }, { method: "post" });
   const catalog = result?.intent === "check-catalog" ? result.catalog : null;
+  const feedPaused = Boolean(feedVersion && !feedVersion.allowed);
   return <s-page heading="UltraLove Catalog" inlineSize="large">
     <div className="catalog-browser workspace">
       <WorkspaceNav current="settings" />
-      <header className="workspace-header"><div><h1>Settings</h1><p>Updates, version and supplier connection for the UltraLove Catalog app on the integration lab.</p></div></header>
+      <header className="workspace-header"><div><h1>Settings</h1><p>App version and updates, inventory sync and the supplier feed for the UltraLove Catalog app on the integration lab.</p></div></header>
+      {feedPaused && <s-banner tone="critical" heading="Imports and inventory sync are paused">
+        {feedVersion?.reason} <a href="#feed-heading">See Supplier feed</a>
+      </s-banner>}
       <div className="settings-layout">
-        <section className="workspace-panel settings-panel" aria-labelledby="auto-updates-heading">
-          <h2 id="auto-updates-heading">Automatic app updates</h2>
-          <p>Once a day the lab checks for a new release of this app and installs it once its checks have passed.
-            Turn this off to stay on the current version. Check now and manual deploys still work while it is off.</p>
-          <label className="settings-switch">
-            <input type="checkbox" role="switch" checked={autoUpdates} disabled={busy} aria-busy={saving || undefined}
-              onChange={toggle("auto-updates")} />
-            <span>Check for updates every 24 hours</span>
-            <span className="status-badge">{autoUpdates ? "On" : "Off"}</span>
-          </label>
-          <RequestFeedback pending={saving} pendingMessage="Saving" error={result?.error} errorHeading="Setting not saved"
-            success={result?.intent === "auto-updates" && !busy
-              ? result.on ? "Automatic updates are on. The next check runs within 24 hours, or use Check now." : "Automatic updates are off. The lab stays on its current version."
-              : undefined} />
-          <Form method="post">
-            <input type="hidden" name="intent" value="check-updates" />
-            <s-button type="submit" disabled={busy || awaitingCheck} loading={requestingCheck || awaitingCheck}>Check now</s-button>
-          </Form>
-          <small>Checks for a new release right away and installs it if its checks have passed, even while automatic updates are off.</small>
+        <section className="workspace-panel settings-panel" aria-labelledby="version-heading">
+          <h2 id="version-heading">App version and updates</h2>
+          {release ? <dl className="settings-facts">
+            <dt>Running release</dt>
+            <dd><a href={`${REPOSITORY}/commit/${release.release}`} target="_blank" rel="noreferrer">{short(release.release)}<span className="visually-hidden"> (opens in a new tab)</span></a></dd>
+            <dt>Installed</dt><dd>{formatTime(release.deployedAt)}</dd>
+            <dt>Last update check</dt>
+            <dd>{update ? <>{formatTime(update.checkedAt)}<small>{updateSummary(update)}</small></> : "No check recorded yet"}</dd>
+          </dl> : <p>Release details are only available on the lab server.</p>}
+          <div className="settings-actions">
+            <Form method="post">
+              <input type="hidden" name="intent" value="check-updates" />
+              <s-button type="submit" variant="primary" disabled={busy || awaitingCheck} loading={requestingCheck || awaitingCheck}>Check now</s-button>
+            </Form>
+            <small>Looks for a new release right away and installs it once its checks have passed, even while automatic updates are off.</small>
+          </div>
           <RequestFeedback pending={requestingCheck || awaitingCheck} pendingMessage="Checking for a new release"
             error={result?.intent === "check-updates" && !busy ? result.error ?? (answered && ["failed", "error"].includes(answered.result) ? updateSummary(answered)
               : checkRequest && gaveUpOn === checkRequest && !answered ? "No result yet. The check may still be running; its result will appear under Last update check." : undefined) : undefined}
             errorHeading="Update check did not finish"
             success={answered && !["failed", "error"].includes(answered.result) ? updateSummary(answered) : undefined}
             successHeading="Update check finished" />
+          <div className="settings-subsection">
+            <label className="settings-switch">
+              <input type="checkbox" role="switch" checked={autoUpdates} disabled={busy} aria-busy={saving || undefined}
+                aria-describedby="auto-updates-help" onChange={toggle("auto-updates")} />
+              <span>Automatic updates</span>
+              <span className="status-badge">{autoUpdates ? "On" : "Off"}</span>
+            </label>
+            <p id="auto-updates-help">Once a day the lab checks for a new release and installs it once its checks have passed.
+              Turn this off to stay on the current version. Check now still works while it is off.</p>
+            <RequestFeedback pending={saving} pendingMessage="Saving" error={result?.intent === "auto-updates" || result?.intent === null ? result.error : undefined} errorHeading="Setting not saved"
+              success={result?.intent === "auto-updates" && !busy
+                ? result.on ? "Automatic updates are on. The next check runs within 24 hours, or use Check now." : "Automatic updates are off. The lab stays on its current version."
+                : undefined} />
+          </div>
         </section>
         <section className="workspace-panel settings-panel" aria-labelledby="inventory-heading">
           <h2 id="inventory-heading">Inventory sync</h2>
-          <p>Products with sync on update their stock from the supplier about every 5 minutes. Pause sync for every product at once
-            during maintenance or a supplier problem. Each product keeps its own setting and catches up when sync resumes.</p>
           <label className="settings-switch">
             <input type="checkbox" role="switch" checked={inventorySync} disabled={busy} aria-busy={pausing || undefined}
-              onChange={toggle("inventory-sync")} />
+              aria-describedby="inventory-help" onChange={toggle("inventory-sync")} />
             <span>Run inventory sync</span>
             <span className="status-badge">{inventorySync ? "Running" : "Paused"}</span>
           </label>
-          <RequestFeedback pending={pausing} pendingMessage="Saving"
+          <p id="inventory-help">Products with sync on update their stock from the supplier about every 5 minutes. Pause it for every product at once
+            during maintenance or a supplier problem. Each product keeps its own setting and catches up when sync resumes.</p>
+          <RequestFeedback pending={pausing} pendingMessage="Saving" error={result?.intent === "inventory-sync" ? result.error : undefined} errorHeading="Setting not saved"
             success={result?.intent === "inventory-sync" && !busy
               ? result.on ? "Inventory sync resumed. Products that are due update first." : "Inventory sync paused for every product. An update already sent to Shopify may finish."
               : undefined} />
@@ -158,39 +173,26 @@ export default function Settings() {
             {inventory.enabled > 0 && !settings.inventoryPaused && inventory.nextRunAt && <><dt>Next due</dt><dd>{formatTime(inventory.nextRunAt)}</dd></>}
           </dl>
         </section>
-        <section className="workspace-panel settings-panel" aria-labelledby="version-heading">
-          <h2 id="version-heading">App version</h2>
-          {release ? <dl className="settings-facts">
-            <dt>Running release</dt>
-            <dd><a href={`${REPOSITORY}/commit/${release.release}`} target="_blank" rel="noreferrer">{short(release.release)} (opens in a new tab)</a></dd>
-            <dt>Installed</dt><dd>{formatTime(release.deployedAt)}</dd>
-            <dt>Last update check</dt>
-            <dd>{update ? <>{formatTime(update.checkedAt)}<small>{updateSummary(update)}</small></> : "No check recorded yet"}</dd>
-          </dl> : <p>Release details are only available on the lab server.</p>}
-        </section>
-        <section className="workspace-panel settings-panel" aria-labelledby="catalog-heading">
-          <h2 id="catalog-heading">Supplier catalog connection</h2>
-          <p>Products, prices and stock come from the UltraLove supplier feed. Check that the feed answers before importing or when sync reports a connection problem.</p>
-          <Form method="post">
-            <input type="hidden" name="intent" value="check-catalog" />
-            <s-button type="submit" disabled={busy} loading={checking}>Check connection</s-button>
-          </Form>
+        <section className="workspace-panel settings-panel" aria-labelledby="feed-heading">
+          <h2 id="feed-heading">Supplier feed</h2>
+          <p>Products, prices and stock come from the UltraLove supplier feed. Before every import preview, import and inventory sync,
+            the app checks the feed version. A newer minor version only adds fields. A different major version pauses imports and
+            inventory sync until the app is updated; sync looks again every 5 minutes and resumes by itself.</p>
+          <FeedVersionFacts check={feedVersion} />
+          <div className="settings-actions">
+            <Form method="post">
+              <input type="hidden" name="intent" value="check-catalog" />
+              <s-button type="submit" disabled={busy} loading={checking}>Check connection</s-button>
+            </Form>
+            <Form method="post">
+              <input type="hidden" name="intent" value="check-feed-version" />
+              <s-button type="submit" disabled={busy} loading={checkingVersion}>Check feed version</s-button>
+            </Form>
+          </div>
           <RequestFeedback pending={checking} pendingMessage="Contacting the supplier feed"
-            error={catalog && !catalog.connected && !busy ? catalog.error : undefined} errorHeading="Supplier catalog unavailable"
+            error={catalog && !catalog.connected && !busy ? catalog.error : undefined} errorHeading="Supplier feed unavailable"
             success={catalog?.connected && !busy ? `The supplier feed answered in ${(catalog.milliseconds / 1000).toFixed(1)} seconds.` : undefined}
             successHeading="Connected" />
-        </section>
-        <section className="workspace-panel settings-panel" aria-labelledby="feed-version-heading">
-          <h2 id="feed-version-heading">Supplier feed version</h2>
-          <p>Before every import preview, import and inventory sync, the app checks which version of the supplier feed it is reading.
-            A newer minor version only adds fields and is fine. A different major version means the feed changed in a way this app
-            cannot read, so imports and inventory sync pause until the app is updated. Sync looks again every 5 minutes and resumes by itself.</p>
-          {feedVersion && !feedVersion.allowed && <s-banner tone="critical" heading="Imports and inventory sync are paused">{feedVersion.reason}</s-banner>}
-          <FeedVersionFacts check={feedVersion} />
-          <Form method="post">
-            <input type="hidden" name="intent" value="check-feed-version" />
-            <s-button type="submit" disabled={busy} loading={checkingVersion}>Check feed version now</s-button>
-          </Form>
           <RequestFeedback pending={checkingVersion} pendingMessage="Checking the supplier feed version"
             success={result?.intent === "check-feed-version" && !busy && feedVersion?.allowed ? "Feed version checked. The result is shown above." : undefined} />
         </section>
