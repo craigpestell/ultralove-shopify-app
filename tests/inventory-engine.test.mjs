@@ -49,6 +49,18 @@ test("wholesale-only products (testers, displays) keep zero stock and ask for th
   assert.equal(unflagged.desired[0].quantity, 7);
   for (const wholesale_only of [null, "true", 1]) assert.throws(() => inventoryFeed({ ...source, wholesale_only }, 100, null));
 });
+test("a wholesale-only variant (a Tester beside retail colours) keeps zero stock while the others sync", () => {
+  assert.equal(inventoryFeed(source, 100, null).inventory[0].wholesale_only, false, "feeds before 1.4 omit the variant flag");
+  const tester = { ...stock, id: 102, stock_owner_id: 102, stock_quantity: 3, wholesale_only: true };
+  const both = [...current, { ...current[0], sourceId: 102, variantId: "gid://shopify/ProductVariant/102", inventoryItemId: "gid://shopify/InventoryItem/102", committed: 0 }];
+  const plan = stockPlan(both, inventoryFeed({ ...source, source_ids: [101, 102], inventory: [{ ...stock, wholesale_only: false }, tester] }, 100, null), location);
+  assert.deepEqual(plan.desired.map((item) => item.quantity), [7, 0]);
+  assert.match(plan.warnings.join(" "), /variant 102 is wholesale-only/);
+  assert.doesNotMatch(plan.warnings.join(" "), /101/);
+  for (const wholesale_only of [null, "true", 1]) {
+    assert.throws(() => inventoryFeed({ ...source, inventory: [{ ...stock, wholesale_only }] }, 100, null));
+  }
+});
 test("malformed stock, identities and checkpoints fail explicitly instead of implying withdrawal", () => {
   for (const change of [
     { cursor: -1 }, { parent_id: 999 }, { inventory: [{ ...stock, stock_quantity: 1.5 }] },

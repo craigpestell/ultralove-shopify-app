@@ -216,7 +216,7 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
     };
     const settingsHtml = await renderSettings();
     for (const shown of ["Supplier feed version", "Imports and inventory sync are paused", "<dt>Feed version</dt><dd>2.0</dd>",
-      "<dt>Supported versions</dt><dd>1.x (written for 1.3)</dd>", "Checked before inventory sync.", "<dt>Result</dt><dd>Not supported</dd>",
+      "<dt>Supported versions</dt><dd>1.x (written for 1.4)</dd>", "Checked before inventory sync.", "<dt>Result</dt><dd>Not supported</dd>",
       "<dt>Paused because</dt><dd>The supplier feed uses schema 2.0", "Check feed version now"]) {
       assert.ok(settingsHtml.includes(shown), `Settings shows: ${shown}`);
     }

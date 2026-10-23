@@ -119,7 +119,9 @@ try {
     }
     echo json_encode( $result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES ) . "\n";
 } catch ( RuntimeException | InvalidArgumentException | JsonException $error ) {
-    if ( $error->getMessage() === 'Wholesale-only product selected; no import planned.' ) {
+    // The supplier import also refuses a product whose every variant is wholesale-only (feed 1.4).
+    if ( in_array( $error->getMessage(), array( 'Wholesale-only product selected; no import planned.',
+        'Wholesale-only products (testers, displays) are not offered for dropshipping.' ), true ) ) {
         echo json_encode( array( 'error' => array( 'status' => 409, 'code' => 'WHOLESALE_ONLY' ) ), JSON_THROW_ON_ERROR ) . "\n";
     } elseif ( $error->getMessage() === 'Selected product/variation is missing or unavailable; no partial import.' ) {
         echo json_encode( array( 'error' => array( 'status' => 409, 'code' => 'SELECTED_PRODUCT_UNAVAILABLE' ) ), JSON_THROW_ON_ERROR ) . "\n";
