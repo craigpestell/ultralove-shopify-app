@@ -77,7 +77,7 @@ Known domain errors (`ImportError`, `CatalogError`, `PricingError`, `ListingPoli
 - The draft (`Draft` in `workspace-policy.ts`) holds `selected`, `markup`, `markups`, `fulfillmentModes`, `listingPolicy`, `active`, `publish`, known `products`, last catalog `browse` query and selection search/page.
 - It lives in React context across views and is mirrored to `sessionStorage` under `ultralove-workspace-v1:<shop>`. It is restored after hydration only if its `baseline` signature still matches the server's saved configuration (`restoreDraft`).
 - `dirty` = `signature(draft) !== signature(saved)`. The selection bar shows "Unsaved to store" / "Saved to store"; Reset restores the saved values. If storage is unavailable a warning banner shows and `beforeunload` guards unsaved work.
-- Changing the selection must go through `select(nextIds)` in `catalog-workspace.tsx`, which also prunes overrides, fulfillment modes and listing links for removed IDs.
+- Changing the selection must go through `select(nextIds)` in `catalog-workspace.tsx`, which also prunes overrides, fulfillment modes and listing links for removed IDs, and sets newly added IDs to `DROPSHIPPING` (`selectedModes` in `fulfillment-policy.ts`). Saved modes stay sparse: a missing entry still means `CATALOG`.
 
 ## Shared components and patterns
 

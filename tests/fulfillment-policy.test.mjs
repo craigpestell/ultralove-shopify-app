@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fulfillmentMode, fulfillmentModes, fulfillmentSignature, modeFor } from "../app/fulfillment-policy.ts";
+import { fulfillmentMode, fulfillmentModes, fulfillmentSignature, modeFor, selectedModes } from "../app/fulfillment-policy.ts";
 import { catalogOnlyPayload, payload, verifyDraft, VERIFY_QUERY } from "../app/import-engine.ts";
 
 test("catalog-only defaults, exact per-product choices and immutable signatures", () => {
@@ -12,6 +12,14 @@ test("catalog-only defaults, exact per-product choices and immutable signatures"
   for (const value of [null, [], { 3: "DROPSHIPPING" }, { 1: "wrong" }, { "01": "CATALOG" }]) {
     assert.throws(() => fulfillmentModes(value, [1, 2]));
   }
+});
+
+test("newly selected products default to dropshipping while kept products keep their choice", () => {
+  assert.deepEqual(selectedModes({}, [], [1, 2]), { 1: "DROPSHIPPING", 2: "DROPSHIPPING" });
+  assert.deepEqual(selectedModes({ 2: "DROPSHIPPING" }, [1, 2], [1, 2, 3]), { 2: "DROPSHIPPING", 3: "DROPSHIPPING" });
+  assert.deepEqual(selectedModes({ 1: "DROPSHIPPING", 2: "DROPSHIPPING" }, [1, 2], [2]), { 2: "DROPSHIPPING" });
+  assert.deepEqual(selectedModes({}, [1], [1, 4], { 4: "CATALOG" }), {});
+  assert.deepEqual(selectedModes({}, [1], [1, 4], { 4: "DROPSHIPPING" }), { 4: "DROPSHIPPING" });
 });
 
 test("catalog-only payload excludes supplier quantities without allowing untracked or overselling stock", async () => {

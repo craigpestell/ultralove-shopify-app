@@ -23,6 +23,15 @@ export function modeFor(modes: FulfillmentModes, id: number): FulfillmentMode {
   return modes[id] ?? "CATALOG";
 }
 
+// Products newly added to the selection default to dropshipping; kept products keep their choice.
+export function selectedModes(modes: FulfillmentModes, previous: number[], next: number[], restore: FulfillmentModes = {}): FulfillmentModes {
+  const kept = new Set(previous);
+  return Object.fromEntries(next.flatMap((id): [string, FulfillmentMode][] => {
+    const mode = kept.has(id) ? modes[id] : restore[id] ?? "DROPSHIPPING";
+    return mode && mode !== "CATALOG" ? [[String(id), mode]] : [];
+  }));
+}
+
 export function fulfillmentSignature(ids: number[], modes: FulfillmentModes) {
   const checked = fulfillmentModes(modes, ids);
   return JSON.stringify([...ids].sort((a, b) => a - b).map((id) => [id, modeFor(checked, id)]));
