@@ -241,7 +241,9 @@ export function stockPlan(current: RemoteInventory[], feed: InventoryFeed, locat
   if (feed.published && feed.wholesale_only) {
     warnings.push("UltraLove marked this product wholesale-only (a tester, display or other store-only item), so it can't be dropshipped: stock is zero. Archive or delete the Shopify listing.");
   }
-  if (feed.source_ids.some((id) => !current.some((item) => item.sourceId === id))) {
+  // Wholesale-only variants (testers, stands) are never imported, so they are not new variants to review.
+  const skipped = new Set(feed.inventory.filter((entry) => entry.wholesale_only).map((entry) => entry.id));
+  if (feed.source_ids.some((id) => !skipped.has(id) && !current.some((item) => item.sourceId === id))) {
     warnings.push("New supplier variants require a separate import/review; no variants were added.");
   }
   const desired = current.map((item) => {

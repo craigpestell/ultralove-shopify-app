@@ -57,6 +57,9 @@ test("a wholesale-only variant (a Tester beside retail colours) keeps zero stock
   assert.deepEqual(plan.desired.map((item) => item.quantity), [7, 0]);
   assert.match(plan.warnings.join(" "), /variant 102 is wholesale-only/);
   assert.doesNotMatch(plan.warnings.join(" "), /101/);
+  const skipped = stockPlan(current, inventoryFeed({ ...source, source_ids: [101, 102], inventory: [stock, tester] }, 100, null), location);
+  assert.deepEqual(skipped.warnings, [], "a wholesale-only variant left out at import is not a new variant to review");
+  assert.equal(skipped.desired[0].quantity, 7);
   for (const wholesale_only of [null, "true", 1]) {
     assert.throws(() => inventoryFeed({ ...source, inventory: [{ ...stock, wholesale_only }] }, 100, null));
   }
