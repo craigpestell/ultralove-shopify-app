@@ -176,3 +176,8 @@
 .settings-facts dt { color: var(--workspace-muted); }
 .settings-facts dd { margin: 0; }
 .settings-facts small { display: block; color: var(--workspace-muted); }
+.settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.settings-actions small { flex: 1 1 24ch; color: var(--workspace-muted); }
+.settings-subsection { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--workspace-border); }
+.settings-subsection p, #inventory-help { color: var(--workspace-muted); }
+.catalog-browser > s-banner { display: block; margin: 0 0 16px; }
