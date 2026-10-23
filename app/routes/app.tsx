@@ -5,22 +5,24 @@ import { AppProvider } from "@shopify/shopify-app-react-router/react";
 
 import { authenticateLabAdmin } from "../shopify.server";
 import { savedConfiguration } from "../imports.server";
+import { currentRelease } from "../settings.server";
 import { WorkspaceProvider } from "../workspace";
 import { AdminLoadingBar } from "../network-state";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticateLabAdmin(request);
 
-  return { apiKey: process.env.SHOPIFY_API_KEY || "", shop: session.shop, saved: await savedConfiguration(session.shop) };
+  const [saved, release] = await Promise.all([savedConfiguration(session.shop), currentRelease()]);
+  return { apiKey: process.env.SHOPIFY_API_KEY || "", shop: session.shop, saved, release: release?.release ?? null };
 };
 
 export default function App() {
-  const { apiKey, shop, saved } = useLoaderData<typeof loader>();
+  const { apiKey, shop, saved, release } = useLoaderData<typeof loader>();
 
   return (
     <AppProvider apiKey={apiKey}>
       <AdminLoadingBar />
-      <WorkspaceProvider shop={shop} saved={saved}><Outlet /></WorkspaceProvider>
+      <WorkspaceProvider shop={shop} saved={saved} release={release}><Outlet /></WorkspaceProvider>
     </AppProvider>
   );
 }
