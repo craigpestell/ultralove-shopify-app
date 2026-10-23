@@ -11,6 +11,14 @@ export class CatalogError extends Error {
 }
 
 type Transport = (request: object) => Promise<unknown>;
+const WHOLESALE_ONLY_MESSAGE = "A selected product is wholesale-only at UltraLove (a tester, display or other store-only item) and can't be dropshipped. Remove it from your selection; nothing was imported.";
+
+/** Feed 1.3 marks testers, displays and other store-only products; older feeds omit the field. */
+function wholesaleOnly(value: unknown): boolean {
+  if (value === undefined || value === false) return false;
+  if (value === true) return true;
+  throw new CatalogError("Supplier catalog returned an invalid wholesale-only flag.");
+}
 export type CatalogProduct = {
   id: number; parent_id: number; name: string; sku: string; type: string;
   price: string | null; currency: string; manage_stock: boolean;
@@ -52,6 +60,11 @@ const sshTransport: Transport = (request) => new Promise((resolve, reject) => {
         try {
           const response: unknown = JSON.parse(stdout);
           if (object(response) && object(response.error) && response.error.status === 409 &&
+              response.error.code === "WHOLESALE_ONLY") {
+            reject(new CatalogError(WHOLESALE_ONLY_MESSAGE));
+            return;
+          }
+          if (object(response) && object(response.error) && response.error.status === 409 &&
               response.error.code === "SELECTED_PRODUCT_UNAVAILABLE") {
             reject(new CatalogError("A selected supplier product or variant is no longer published or available. Review your selection before retrying; no partial supplier data was accepted."));
             return;
@@ -85,10 +98,13 @@ const sshTransport: Transport = (request) => new Promise((resolve, reject) => {
   child.stdin?.end(JSON.stringify(request));
 });
 
-export async function productsPage(filters: object, transport: Transport = sshTransport): Promise<Page<{ products: CatalogProduct[] }>> {
+/** One catalog page without wholesale-only products; `hidden` counts the ones left out, so a page can show fewer than 50. */
+export async function productsPage(filters: object, transport: Transport = sshTransport): Promise<Page<{ products: CatalogProduct[]; hidden: number }>> {
   const data = envelope(await transport({ operation: "products", filters }));
   if (!Array.isArray(data.products) || data.products.length > 50) throw new CatalogError("Supplier catalog exceeded its 50-product page limit.");
-  const products: CatalogProduct[] = data.products.map((record: unknown) => {
+  const records: unknown[] = data.products;
+  const listed = records.filter((record) => !(object(record) && wholesaleOnly(record.wholesale_only)));
+  const products: CatalogProduct[] = listed.map((record: unknown) => {
     if (!object(record) || !Number.isSafeInteger(record.id) || Number(record.id) < 1 ||
         record.parent_id !== 0 || typeof record.name !== "string" || typeof record.sku !== "string" ||
         typeof record.type !== "string" || !(record.price === null || typeof record.price === "string") ||
@@ -112,7 +128,7 @@ export async function productsPage(filters: object, transport: Transport = sshTr
       images,
     };
   });
-  return { products, next_after_id: Number(data.next_after_id), has_more: Boolean(data.has_more) };
+  return { products, hidden: records.length - listed.length, next_after_id: Number(data.next_after_id), has_more: Boolean(data.has_more) };
 }
 
 export async function categoriesPage(after: number, transport: Transport = sshTransport): Promise<Page<{ categories: Category[]; schemaVersion: unknown }>> {
@@ -162,6 +178,15 @@ export async function validateSelection(ids: number[], transport: Transport = ss
         !batch.every((id) => selected.includes(id))) {
       throw new CatalogError("Some selected products are no longer published. Refresh the catalog and revise the selection.");
     }
+    // A proxy from before feed 1.3 sends no flags; the import plan still refuses flagged products.
+    const flagged = object(data) && Array.isArray(data.products)
+      ? data.products.filter((product: unknown) => object(product) && wholesaleOnly(product.wholesale_only)) : [];
+    if (flagged.length) {
+      // Feed names already start with the SKU.
+      const names = flagged.map((product: Record<string, unknown>) =>
+        typeof product.name === "string" ? supplierText(product.name).trim() : `#${String(product.id)}`);
+      throw new CatalogError(`These selected products are wholesale-only at UltraLove (testers, displays or other store-only items) and can't be dropshipped: ${names.join("; ")}. Remove them from your selection.`);
+    }
   }
 }
 
@@ -184,7 +209,8 @@ export async function selectedProducts(ids: number[], transport: Transport = ssh
       throw new CatalogError("Selected product details contain an invalid product.");
     }
     seen.add(product.id);
-    return { id: product.id, name: product.name, sku: product.sku, price: product.price, type: product.type };
+    const summary: ProductSummary = { id: product.id, name: product.name, sku: product.sku, price: product.price, type: product.type };
+    return wholesaleOnly(product.wholesale_only) ? { ...summary, wholesaleOnly: true } : summary;
   });
 }
 

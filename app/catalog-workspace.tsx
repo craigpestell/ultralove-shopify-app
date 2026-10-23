@@ -5,7 +5,7 @@ import type { loader as detailsLoader } from "./routes/app.selection-details";
 import { CATALOG_BATCH_SIZE, pageSelection, supplierText } from "./catalog-policy";
 import { retailPrice, selectedOverrides } from "./pricing-policy";
 import { useWorkspace, WorkspaceNav } from "./workspace";
-import { selectedPage, signature, validListingChoices, validPricing, workspaceHref } from "./workspace-policy";
+import { selectedPage, signature, validListingChoices, validPricing, WHOLESALE_ONLY_NOTE, workspaceHref } from "./workspace-policy";
 import { fulfillmentLabel, fulfillmentMode, modeFor } from "./fulfillment-policy";
 import ProductImage from "./product-image";
 import ImportOptions from "./import-options";
@@ -228,7 +228,7 @@ export default function CatalogWorkspace() {
                   const name = product ? supplierText(product.name) : `Supplier product #${id}`;
                   return <tr key={id} className="is-selected">
                     <td><input type="checkbox" aria-label={`Unselect ${name} (#${id})`} checked disabled={busy} onChange={() => unselect([id], name)} /></td>
-                    <td><div className="catalog-product"><div><strong>{name}</strong><small>{product ? `${product.sku || "Missing SKU — review required"} · ${product.type === "variable" ? "Multiple variants" : "Single variant"}` : "Loading details"}</small></div></div></td>
+                    <td><div className="catalog-product"><div><strong>{name}</strong><small>{product ? `${product.sku || "Missing SKU — review required"} · ${product.type === "variable" ? "Multiple variants" : "Single variant"}${product.wholesaleOnly ? ` · ${WHOLESALE_ONLY_NOTE}` : ""}` : "Loading details"}</small></div></div></td>
                     <td>{!product ? "—" : product.price === null || product.price === "" ? "Price needs review" : `$${product.price}`}</td>
                     <td><strong>{estimate(product?.price ?? null, id, product?.type ?? "")}</strong>{markups[id] !== undefined && <small>{markups[id]}% override</small>}</td>
                     <td><button type="button" className="quiet-button" disabled={busy} aria-label={`Unselect ${name}`} onClick={() => unselect([id], name)}>Unselect</button></td>
@@ -258,7 +258,8 @@ export default function CatalogWorkspace() {
           <s-button type="submit" disabled={busy} loading={pending({ method: "GET" })}>Search catalog</s-button>
           {(filters.search || filters.category_id) && <PendingLink to={href({ search: null, category_id: null, after_id: null })}>Clear filters</PendingLink>}
         </Form>
-        <div className="catalog-toolbar"><span>{products?.products.length ?? 0} products on this page · CAD</span>
+        <div className="catalog-toolbar"><span>{products?.products.length ?? 0} products on this page{products?.hidden
+          ? ` · ${products.hidden} wholesale-only ${products.hidden === 1 ? "product" : "products"} (testers, displays) hidden` : ""} · CAD</span>
           <PendingLink to={viewHref("selection")}>Retail estimates at {markup}% default markup</PendingLink>
 </div>
         {/* A focusable region lets keyboard users scroll wide catalog tables. */}
@@ -283,7 +284,7 @@ export default function CatalogWorkspace() {
             </tr>)}</tbody>
           </table>
         </div>
-        {products && !products.products.length && <div className="workspace-empty"><h2>No matching products</h2><p>Try another name or SKU. Your selections have not changed.</p><PendingLink to={href({ search: null, category_id: null, after_id: null })}>Clear filters</PendingLink></div>}
+        {products && !products.products.length && !products.hidden && <div className="workspace-empty"><h2>No matching products</h2><p>Try another name or SKU. Your selections have not changed.</p><PendingLink to={href({ search: null, category_id: null, after_id: null })}>Clear filters</PendingLink></div>}
         <nav className="catalog-pagination" aria-label="Catalog pages"><PendingLink to={href({ after_id: null })}>First page</PendingLink>
           {products?.has_more && <PendingLink to={href({ after_id: String(products.next_after_id) })}>Next 50 products</PendingLink>}</nav>
         </>}
@@ -316,7 +317,7 @@ export default function CatalogWorkspace() {
               const product = draft.products[id];
               const name = product ? supplierText(product.name) : `Supplier product #${id}`;
               return <li key={id}>
-                <div className="selection-product-name"><strong>{name}</strong><small>{product?.sku || "Details verified in preview"}{offPage.includes(id) ? " · Outside current catalog page" : ""}</small></div>
+                <div className="selection-product-name"><strong>{name}</strong><small>{product?.sku || "Details verified in preview"}{offPage.includes(id) ? " · Outside current catalog page" : ""}{product?.wholesaleOnly ? ` · ${WHOLESALE_ONLY_NOTE}` : ""}</small></div>
                 <div className="selection-price"><small>Est. retail · CAD</small><strong>{estimate(product?.price ?? null, id, product?.type ?? "")}</strong></div>
                 {overrideField(id, name)}
                 <button type="button" className="quiet-button" disabled={busy} aria-label={`Remove ${name}`} onClick={() => select(ids.filter((selectedId) => selectedId !== id))}>Remove</button>

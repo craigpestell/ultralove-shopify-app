@@ -24,6 +24,8 @@ type SourceStock = {
 };
 export type InventoryFeed = Checkpoint & {
   parent_id: number; published: boolean; source_ids: number[]; inventory: SourceStock[]; resynced: boolean;
+  /** Feed 1.3: UltraLove sells this product to stores only (tester, display); older feeds omit it. */
+  wholesale_only: boolean;
 };
 
 function object(value: unknown) {
@@ -84,6 +86,7 @@ export function inventoryFeed(value: unknown, parentId: number, previous: Checkp
   const next = checkpoint(data);
   const ids = distinct(data.source_ids);
   if (data.parent_id !== parentId || typeof data.published !== "boolean" || typeof data.resynced !== "boolean" ||
+      !(data.wholesale_only === undefined || typeof data.wholesale_only === "boolean") ||
       (previous && next.generation === previous.generation && next.cursor < previous.cursor && !data.resynced) ||
       (previous && next.generation !== previous.generation && !data.resynced)) {
     throw new InventoryError("Supplier inventory identity/checkpoint changed without a verified resync.");
@@ -104,7 +107,8 @@ export function inventoryFeed(value: unknown, parentId: number, previous: Checkp
   });
   if (inventory.length > ids.length || new Set(inventory.map((item) => item.id)).size !== inventory.length ||
       (!data.published && (ids.length || inventory.length))) throw new InventoryError("Supplier returned duplicate or withdrawn inventory records.");
-  return { ...next, parent_id: parentId, published: data.published, source_ids: ids, inventory, resynced: data.resynced };
+  return { ...next, parent_id: parentId, published: data.published, source_ids: ids, inventory, resynced: data.resynced,
+    wholesale_only: data.wholesale_only === true };
 }
 
 const inventoryProductFields = (pageSize: 25 | 100) => `
@@ -231,6 +235,9 @@ export function stockPlan(current: RemoteInventory[], feed: InventoryFeed, locat
   gid(locationId, "Location");
   const warnings: string[] = [];
   if (!feed.published) warnings.push("Supplier product withdrawn: mapped stock is zero.");
+  if (feed.published && feed.wholesale_only) {
+    warnings.push("UltraLove marked this product wholesale-only (a tester, display or other store-only item), so it can't be dropshipped: stock is zero. Archive or delete the Shopify listing.");
+  }
   if (feed.source_ids.some((id) => !current.some((item) => item.sourceId === id))) {
     warnings.push("New supplier variants require a separate import/review; no variants were added.");
   }
@@ -241,7 +248,7 @@ export function stockPlan(current: RemoteInventory[], feed: InventoryFeed, locat
       if (feed.published) warnings.push(`Supplier variant ${item.sourceId} is unavailable: stock is zero.`);
     } else if (!stock.manage_stock || stock.stock_quantity === null || stock.stock_owner_id !== stock.id) {
       warnings.push(`Supplier variant ${item.sourceId} has unknown, unmanaged or shared stock: stock is zero until reviewed.`);
-    } else if (stock.stock_status !== "outofstock") {
+    } else if (stock.stock_status !== "outofstock" && !feed.wholesale_only) {
       quantity = Math.max(0, stock.stock_quantity);
     }
     if (quantity < item.committed) warnings.push(`Supplier variant ${item.sourceId} has less stock than Shopify reserved orders: fulfillment requires review.`);
