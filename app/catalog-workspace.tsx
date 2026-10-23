@@ -6,7 +6,8 @@ import { CATALOG_BATCH_SIZE, pageSelection, supplierText } from "./catalog-polic
 import { retailPrice, selectedOverrides } from "./pricing-policy";
 import { useWorkspace, WorkspaceNav } from "./workspace";
 import { selectedPage, signature, validListingChoices, validPricing, WHOLESALE_ONLY_NOTE, workspaceHref } from "./workspace-policy";
-import { fulfillmentLabel, fulfillmentMode, modeFor } from "./fulfillment-policy";
+import { fulfillmentLabel, fulfillmentMode, modeFor, selectedModes } from "./fulfillment-policy";
+import type { FulfillmentModes } from "./fulfillment-policy";
 import ProductImage from "./product-image";
 import ImportOptions from "./import-options";
 import ImportResults from "./import-results";
@@ -44,7 +45,7 @@ export default function CatalogWorkspace() {
   const [selectedOnly, setSelectedOnly] = useState(false);
   const [selectedOnlySearch, setSelectedOnlySearch] = useState("");
   const [selectedOnlyPage, setSelectedOnlyPage] = useState(1);
-  const [removed, setRemoved] = useState<{ ids: number[]; label: string } | null>(null);
+  const [removed, setRemoved] = useState<{ ids: number[]; label: string; modes: FulfillmentModes } | null>(null);
   const showSelected = view === "catalog" && selectedOnly;
   const details = useFetcher<typeof detailsLoader>();
   const fetchDetails = details.load;
@@ -114,9 +115,9 @@ export default function CatalogWorkspace() {
   const selectedOnPage = pageIds.filter((id) => ids.includes(id)).length;
   const allOnPageSelected = pageIds.length > 0 && selectedOnPage === pageIds.length;
   const offPage = ids.filter((id) => !pageIds.includes(id));
-  const select = (nextIds: number[]) => setDraft((current) => ({
+  const select = (nextIds: number[], restoreModes: FulfillmentModes = {}) => setDraft((current) => ({
     ...current, selected: nextIds, markups: selectedOverrides(current.markups, nextIds),
-    fulfillmentModes: Object.fromEntries(Object.entries(current.fulfillmentModes ?? {}).filter(([id]) => nextIds.includes(Number(id)))),
+    fulfillmentModes: selectedModes(current.fulfillmentModes ?? {}, current.selected, nextIds, restoreModes),
     selectionPage: selectedPage(nextIds, current.products, current.selectionSearch, current.selectionPage).page,
     listingPolicy: { ...current.listingPolicy,
       links: Object.fromEntries(Object.entries(current.listingPolicy.links).filter(([id]) => nextIds.includes(Number(id)))),
@@ -126,11 +127,11 @@ export default function CatalogWorkspace() {
   const unselect = (removedIds: number[], label: string) => {
     if (!removedIds.length) return;
     select(ids.filter((id) => !removedIds.includes(id)));
-    setRemoved({ ids: removedIds, label });
+    setRemoved({ ids: removedIds, label, modes: Object.fromEntries(removedIds.map((id) => [id, modeFor(modes, id)])) });
   };
   const undoRemove = () => {
     if (!removed) return;
-    select([...ids, ...removed.ids.filter((id) => !ids.includes(id))]);
+    select([...ids, ...removed.ids.filter((id) => !ids.includes(id))], removed.modes);
     setRemoved(null);
   };
   const showProducts = (only: boolean) => {
