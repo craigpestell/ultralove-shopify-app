@@ -11,6 +11,30 @@ the guide intentionally contains no passwords or private credentials.
 
 ## Status
 
+### Approved retailer stores
+
+Any Shopify store can install the app, but only stores UltraLove approved can use it.
+`APPROVED_SHOPS` in `/etc/ultralove-shopify/app.env` is a comma-separated list of
+`.myshopify.com` domains (the app and the worker both read it; restart both after a change).
+When it is unset, only the integration lab is approved, so the lab keeps working unchanged.
+Other stores see a **Waiting for UltraLove approval** page showing their store domain, and
+the worker does no work for them. A store that loses approval keeps its data. The next step
+is to read this list from the WordPress feed plugin instead of the environment.
+
+Release details, **Check now** and **Automatic updates** in Settings concern the whole app
+host, so only `OPERATOR_SHOP` (default: the integration lab) sees them. **Run inventory sync**
+is now per store (`ShopSettings`); migration `20261023230000_shop_settings` carries the lab's
+current pause over to the lab store.
+
+Uninstalling stops a store's work: its sessions are deleted, queued imports fail with an
+explanation and inventory sync is turned off. Selections, import history and listing links
+stay until Shopify's `shop/redact` request, which deletes everything stored for the store.
+`customers/data_request` and `customers/redact` need no action because the app stores no
+customer data. These privacy topics, and the removal of the unused `write_orders`,
+`write_merchant_managed_fulfillment_orders` and `write_fulfillments` scopes, take effect
+only after `shopify app deploy` releases the app configuration; update `SCOPES` in the lab's
+`app.env` at the same time.
+
 ### Deleted Shopify listings
 
 Inventory keeps deleted-listing history in a **Deleted / archived** view rather

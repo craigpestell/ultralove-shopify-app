@@ -6,7 +6,8 @@ import {
 } from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
-import { assertLabLogin, assertLabRequest, assertLabShop } from "./lab-policy.server";
+import { redirect } from "react-router";
+import { assertShopDomain, assertSingleLoginShop, assertSingleShop, isApprovedShop } from "./shop-policy.server";
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
@@ -29,15 +30,26 @@ export default shopify;
 export const apiVersion = ApiVersion.October26;
 export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
 export const authenticate = shopify.authenticate;
-export async function authenticateLabAdmin(request: Request) {
-  await assertLabRequest(request);
+/** Authenticates any store that installed the app, approved or not. */
+export async function authenticateShopAdmin(request: Request) {
+  assertSingleShop(request);
   const context = await shopify.authenticate.admin(request);
-  assertLabShop(context.session.shop);
+  assertShopDomain(context.session.shop);
+  return context;
+}
+
+/**
+ * Authenticates a store UltraLove approved. Other stores go to the waiting-for-approval page,
+ * keeping the embedded query so App Bridge authentication still works there.
+ */
+export async function authenticateRetailer(request: Request) {
+  const context = await authenticateShopAdmin(request);
+  if (!(await isApprovedShop(context.session.shop))) throw redirect(`/app/pending${new URL(request.url).search}`);
   return context;
 }
 
 export async function login(request: Request) {
-  await assertLabLogin(request);
+  await assertSingleLoginShop(request);
   return shopify.login(request);
 }
 export const registerWebhooks = shopify.registerWebhooks;

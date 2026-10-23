@@ -1,5 +1,5 @@
 import db from "./db.server";
-import { assertLabShop } from "./lab-policy.server";
+import { assertShopDomain } from "./shop-policy.server";
 import { record } from "./import-engine";
 import type { GraphQL } from "./import-engine";
 import { InventoryError } from "./inventory-engine";
@@ -21,7 +21,7 @@ export function deletedProductId(value: unknown): string {
 }
 
 export async function markListingDeleted(shop: string, productId: string) {
-  assertLabShop(shop);
+  assertShopDomain(shop);
   if (!/^gid:\/\/shopify\/Product\/[1-9]\d*$/.test(productId)) throw new InventoryError("Invalid Shopify listing ID.");
   const deletedAt = new Date();
   await db.$transaction(async (transaction) => {
@@ -39,7 +39,7 @@ export async function markListingDeleted(shop: string, productId: string) {
 }
 
 export async function verifyImportedListings(shop: string, api: GraphQL) {
-  assertLabShop(shop);
+  assertShopDomain(shop);
   const claims = await db.importClaim.findMany({
     where: { shop, productId: { not: null }, deletedAt: null,
       OR: [{ listingCheckedAt: null }, { listingCheckedAt: { lte: new Date(Date.now() - LISTING_CHECK_INTERVAL) } }] },

@@ -1,11 +1,11 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { assertLabShop } from "../lab-policy.server";
+import { assertShopDomain } from "../shop-policy.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
     const { payload, session, topic, shop } = await authenticate.webhook(request);
-    assertLabShop(shop);
+    assertShopDomain(shop);
     console.log(`Received ${topic} webhook for ${shop}`);
 
     const current: unknown = payload.current;

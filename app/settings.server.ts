@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, readFile, readlink, writeFile } from "node:fs/promises";
 import { basename } from "node:path";
 import prisma from "./db.server";
+import { assertShopDomain } from "./shop-policy.server";
 import { categoriesPage, CatalogError } from "./catalog.server";
 
 const ID = "lab";
@@ -17,19 +18,31 @@ export type UpdateStatus = {
   checkedAt: string; result: (typeof UPDATE_RESULTS)[number]; release: string | null; checks: string | null; request: string | null;
 };
 
-/** Automatic updates stay on until someone turns them off, including before the row exists. */
-export async function appSettings() {
-  const row = await prisma.appSettings.findUnique({ where: { id: ID } });
-  return { autoUpdates: row?.autoUpdates ?? true, inventoryPaused: row?.inventoryPaused ?? false };
+/** Automatic updates stay on until the operator turns them off, including before the row exists. */
+export async function appSettings(shop: string) {
+  const [row, pausedShops] = await Promise.all([prisma.appSettings.findUnique({ where: { id: ID } }), pausedInventoryShops()]);
+  return { autoUpdates: row?.autoUpdates ?? true, inventoryPaused: pausedShops.includes(shop) };
 }
 
-export async function updateSettings(change: { autoUpdates: boolean } | { inventoryPaused: boolean }) {
-  await prisma.appSettings.upsert({ where: { id: ID }, create: { id: ID, ...change }, update: change });
+/** Automatic updates apply to the whole app host; only the operator store may change them. */
+export async function updateAutoUpdates(autoUpdates: boolean) {
+  await prisma.appSettings.upsert({ where: { id: ID }, create: { id: ID, autoUpdates }, update: { autoUpdates } });
 }
 
-/** True while inventory sync is paused for every product from Settings. */
-export async function inventoryPaused() {
-  return (await prisma.appSettings.findUnique({ where: { id: ID }, select: { inventoryPaused: true } }))?.inventoryPaused ?? false;
+/** Pauses or resumes inventory sync for every product of one store. */
+export async function updateInventoryPaused(shop: string, inventoryPaused: boolean) {
+  assertShopDomain(shop);
+  await prisma.shopSettings.upsert({ where: { shop }, create: { shop, inventoryPaused }, update: { inventoryPaused } });
+}
+
+/** True while this store paused inventory sync for every product from Settings. */
+export async function inventoryPaused(shop: string) {
+  return (await prisma.shopSettings.findUnique({ where: { shop }, select: { inventoryPaused: true } }))?.inventoryPaused ?? false;
+}
+
+/** Stores whose inventory sync is paused, so the worker skips them. */
+export async function pausedInventoryShops() {
+  return (await prisma.shopSettings.findMany({ where: { inventoryPaused: true }, select: { shop: true } })).map((row) => row.shop);
 }
 
 type InventoryRow = { deletedAt: string | null; enabled: boolean; status: string; error: string | null; lastSuccessAt: string | null; nextRunAt: string | null };

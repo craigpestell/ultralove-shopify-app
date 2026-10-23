@@ -3,8 +3,9 @@ import type { ChangeEvent } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
 import { data, Form, useActionData, useLoaderData, useLocation, useNavigation, useRevalidator, useRouteError, useSubmit } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { authenticateLabAdmin } from "../shopify.server";
-import { appSettings, catalogConnection, currentRelease, inventoryHealth, requestUpdateCheck, updateSettings, updateStatus } from "../settings.server";
+import { authenticateRetailer } from "../shopify.server";
+import { appSettings, catalogConnection, currentRelease, inventoryHealth, requestUpdateCheck, updateAutoUpdates, updateInventoryPaused, updateStatus } from "../settings.server";
+import { isOperatorShop } from "../shop-policy.server";
 import { inventoryScreen } from "../inventory.server";
 import type { UpdateStatus } from "../settings.server";
 import { checkFeedVersion, lastFeedVersionCheck } from "../feed-version.server";
@@ -20,16 +21,21 @@ const REPOSITORY = "https://github.com/craigpestell/ultralove-shopify-app";
 const CHECK_WAIT_MS = 3 * 60 * 1000;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticateLabAdmin(request);
-  const [settings, release, update, products, feedVersion] = await Promise.all([appSettings(), currentRelease(), updateStatus(),
-    inventoryScreen(session.shop), lastFeedVersionCheck()]);
-  return { settings, release, update, inventory: inventoryHealth(products), feedVersion };
+  const { session } = await authenticateRetailer(request);
+  // Release details and update controls concern the whole app host, so only the operator store sees them.
+  const operator = isOperatorShop(session.shop);
+  const [settings, release, update, products, feedVersion] = await Promise.all([appSettings(session.shop),
+    operator ? currentRelease() : null, operator ? updateStatus() : null, inventoryScreen(session.shop), lastFeedVersionCheck()]);
+  return { operator, settings, release, update, inventory: inventoryHealth(products), feedVersion };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  await authenticateLabAdmin(request);
+  const { session } = await authenticateRetailer(request);
   const form = await request.formData();
   const intent = form.get("intent");
+  if ((intent === "check-updates" || intent === "auto-updates") && !isOperatorShop(session.shop)) {
+    return data({ intent, error: "Only UltraLove can manage app updates.", on: null, catalog: null }, { status: 403 });
+  }
   if (intent === "check-updates") {
     const request = await requestUpdateCheck();
     return request ? data({ intent, error: null, on: null, catalog: null, request })
@@ -43,7 +49,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return data({ intent: null, error: "Choose on or off for this setting.", on: null, catalog: null }, { status: 400 });
   }
   const on = values[0] === "on";
-  await updateSettings(intent === "auto-updates" ? { autoUpdates: on } : { inventoryPaused: !on });
+  await (intent === "auto-updates" ? updateAutoUpdates(on) : updateInventoryPaused(session.shop, !on));
   return data({ intent, error: null, on, catalog: null });
 };
 
@@ -76,7 +82,7 @@ function FeedVersionFacts({ check }: { check: FeedVersionCheck | null }) {
 }
 
 export default function Settings() {
-  const { settings, release, update, inventory, feedVersion } = useLoaderData<typeof loader>();
+  const { operator, settings, release, update, inventory, feedVersion } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -110,12 +116,12 @@ export default function Settings() {
   return <s-page heading="UltraLove Catalog" inlineSize="large">
     <div className="catalog-browser workspace">
       <WorkspaceNav current="settings" />
-      <header className="workspace-header"><div><h1>Settings</h1><p>App version and updates, inventory sync and the supplier feed for the UltraLove Catalog app on the integration lab.</p></div></header>
+      <header className="workspace-header"><div><h1>Settings</h1><p>{operator ? "App version and updates, inventory sync and the supplier feed." : "Inventory sync and the supplier feed."}</p></div></header>
       {feedPaused && <s-banner tone="critical" heading="Imports and inventory sync are paused">
         {feedVersion?.reason} <a href="#feed-heading">See Supplier feed</a>
       </s-banner>}
       <div className="settings-layout">
-        <section className="workspace-panel settings-panel" aria-labelledby="version-heading">
+        {operator && <section className="workspace-panel settings-panel" aria-labelledby="version-heading">
           <h2 id="version-heading">App version and updates</h2>
           {release ? <dl className="settings-facts">
             <dt>Running release</dt>
@@ -151,7 +157,7 @@ export default function Settings() {
                 ? result.on ? "Automatic updates are on. The next check runs within 24 hours, or use Check now." : "Automatic updates are off. The lab stays on its current version."
                 : undefined} />
           </div>
-        </section>
+        </section>}
         <section className="workspace-panel settings-panel" aria-labelledby="inventory-heading">
           <h2 id="inventory-heading">Inventory sync</h2>
           <label className="settings-switch">

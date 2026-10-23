@@ -40,7 +40,7 @@ test("inventory enrollment, persistent retries, pause and reservations work end-
           export async function importPlan() { throw new Error("Inventory must not import"); }`;
         if (id.endsWith("/app/shopify.server.ts")) return `
           export const auth = { shop: "ultralove-integration-lab.myshopify.com", api: null, rejected: false };
-          export async function authenticateLabAdmin() {
+          export async function authenticateRetailer() {
             if(auth.rejected) throw new Response("Forbidden",{status:403});
             return {session:{shop:auth.shop},admin:{graphql:async(query,options)=>({json:()=>auth.api(query,options.variables)})}};
           }`;

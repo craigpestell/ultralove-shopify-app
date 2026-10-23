@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
 import { data, Form, useActionData, useLoaderData, useLocation, useRevalidator, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { authenticateLabAdmin } from "../shopify.server";
+import { authenticateRetailer } from "../shopify.server";
 import { enableAllInventory, inventoryControl, inventoryScreen } from "../inventory.server";
 import { InventoryError } from "../inventory-engine";
 import { supplierText } from "../catalog-policy";
@@ -15,12 +15,12 @@ import { PendingLink, RequestFeedback, useNetworkState } from "../network-state"
 import "../catalog.css";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticateLabAdmin(request);
-  const [products, paused] = await Promise.all([inventoryScreen(session.shop), inventoryPaused()]);
+  const { session } = await authenticateRetailer(request);
+  const [products, paused] = await Promise.all([inventoryScreen(session.shop), inventoryPaused(session.shop)]);
   return { products, paused };
 };
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session, admin } = await authenticateLabAdmin(request);
+  const { session, admin } = await authenticateRetailer(request);
   const form = await request.formData();
   try {
     const field = (name: string) => {

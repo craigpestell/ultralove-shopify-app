@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import db from "./db.server";
 import { CATALOG_BATCH_SIZE, selectionIds } from "./catalog-policy";
 import { importPlan, validateSelection } from "./catalog.server";
-import { assertLabShop } from "./lab-policy.server";
+import { assertShopDomain } from "./shop-policy.server";
 import { feedVersionGate } from "./feed-version.server";
 import { ImportError, MAX_PREVIEW_AGE, catalogOnlyPayload, importConfirmation, importDraft, importSettings, markupPercent, matchProduct, onlineStorePublication, ownedProduct, payload, plannedFeed, priceRange, remoteCatalog, reviewLabels, shopContext } from "./import-engine";
 import type { GraphQL } from "./import-engine";
@@ -42,7 +42,7 @@ async function checkTargetClaims(shop: string, supplierId: number, productId: st
 }
 
 export async function savedConfiguration(shop: string) {
-  assertLabShop(shop);
+  assertShopDomain(shop);
   const saved = await db.catalogSelection.findUnique({ where: { shop } });
   const selected = selectionIds(saved ? JSON.parse(saved.productIds) : []);
   return { selected, markup: markupPercent(saved?.markup ?? "0"),
@@ -56,7 +56,7 @@ export async function savedSelection(shop: string) {
 
 export async function createPreview(shop: string, markup: string, api: GraphQL, choices = { active: false, publish: false },
   configuration?: { ids: number[]; markups: MarkupOverrides; fulfillmentModes?: FulfillmentModes }, requestedPolicy?: ListingPolicy) {
-  assertLabShop(shop);
+  assertShopDomain(shop);
   if (typeof choices.active !== "boolean" || typeof choices.publish !== "boolean" || (choices.publish && !choices.active)) {
     throw new ImportError("Publishing requires a valid Active import setting.");
   }
@@ -196,7 +196,7 @@ export async function createPreview(shop: string, markup: string, api: GraphQL, 
 }
 
 export async function queueJob(shop: string, id: string, retry: boolean, confirmation = "draft-only") {
-  assertLabShop(shop);
+  assertShopDomain(shop);
   const job = await db.importJob.findFirst({ where: { id, shop }, include: { items: true } });
   if (!job || job.status !== (retry ? "FAILED" : "PREVIEW")) throw new ImportError("This job cannot be queued in its current state.");
   const policy = listingPolicy(JSON.parse(job.listingPolicy), selectionIds(JSON.parse(job.selection)));
@@ -221,7 +221,7 @@ export async function queueJob(shop: string, id: string, retry: boolean, confirm
 }
 
 export async function importScreen(shop: string, id: string | null) {
-  assertLabShop(shop);
+  assertShopDomain(shop);
   const [configuration, history, current] = await Promise.all([
     savedConfiguration(shop),
     db.importJob.findMany({ where: { shop }, orderBy: { createdAt: "desc" }, take: 10,
@@ -260,7 +260,7 @@ export async function importScreen(shop: string, id: string | null) {
 }
 
 export async function runJob(id: string, shop: string, api: GraphQL, stopping: () => boolean) {
-  assertLabShop(shop);
+  assertShopDomain(shop);
   const claimed = await db.importJob.updateMany({ where: { id, shop, status: "QUEUED" }, data: { status: "RUNNING" } });
   if (claimed.count !== 1) return;
   const job = await db.importJob.findUniqueOrThrow({ where: { id }, include: { items: { orderBy: { supplierId: "asc" } } } });
