@@ -23,16 +23,41 @@ function shopList(value: string | undefined, fallback: string[]) {
   return shops.filter(isShopDomain);
 }
 
+const STORE_LIST_MS = 5 * 60 * 1000;
+const STORE_LIST_RETRY_MS = 60 * 1000;
+type StoreList = { stores: string[] | null; nextReadAt: number; reading?: Promise<void> };
+const wordpress: StoreList = { stores: null, nextReadAt: 0 };
+const readWordPress = async () => (await import("./catalog.server")).approvedStoreList();
+
 /**
- * Stores UltraLove has approved to browse and import its catalog, from the comma-separated
- * APPROVED_SHOPS. Any store can install the app; the rest see the waiting-for-approval page.
+ * Stores UltraLove approved to browse and import its catalog: the "Approved Shopify store" list in
+ * WordPress (feed 1.6), plus the comma-separated APPROVED_SHOPS, which defaults to the lab. The
+ * WordPress list is read at most every five minutes. When a read fails, the last list read stays in
+ * use; before the first successful read, only APPROVED_SHOPS applies. Any store can install the
+ * app; the rest see the waiting-for-approval page.
  */
-export async function approvedShops(env: NodeJS.ProcessEnv = process.env): Promise<string[]> {
-  return shopList(env.APPROVED_SHOPS, [LAB_SHOP]);
+export async function approvedShops(env: NodeJS.ProcessEnv = process.env, read: () => Promise<string[]> = readWordPress,
+  cache: StoreList = wordpress): Promise<string[]> {
+  // Requests that arrive while the list is being read wait for that one read.
+  if (Date.now() >= cache.nextReadAt) cache.reading ??= (async () => {
+    try {
+      cache.stores = (await read()).filter(isShopDomain);
+      cache.nextReadAt = Date.now() + STORE_LIST_MS;
+    } catch (error) {
+      console.warn("Approved store list could not be read from WordPress; using the last list read.",
+        error instanceof Error ? error.message : "Unknown failure");
+      cache.nextReadAt = Date.now() + STORE_LIST_RETRY_MS;
+    } finally {
+      cache.reading = undefined;
+    }
+  })();
+  await cache.reading;
+  return [...new Set([...shopList(env.APPROVED_SHOPS, [LAB_SHOP]), ...cache.stores ?? []])];
 }
 
-export async function isApprovedShop(shop: unknown, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
-  return isShopDomain(shop) && (await approvedShops(env)).includes(shop);
+export async function isApprovedShop(shop: unknown, env: NodeJS.ProcessEnv = process.env,
+  read?: () => Promise<string[]>, cache?: StoreList): Promise<boolean> {
+  return isShopDomain(shop) && (await approvedShops(env, read, cache)).includes(shop);
 }
 
 /** The store that manages the app host itself: release details, update checks and automatic updates. */

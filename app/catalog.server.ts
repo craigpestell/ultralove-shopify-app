@@ -144,6 +144,16 @@ export async function categoriesPage(after: number, transport: Transport = sshTr
   return { categories, next_after_id: Number(data.next_after_id), has_more: Boolean(data.has_more), schemaVersion: data.schema_version };
 }
 
+/** Stores UltraLove approved in WordPress (feed 1.6). Older feeds and proxies fail with a CatalogError. */
+export async function approvedStoreList(transport: Transport = sshTransport): Promise<string[]> {
+  const data = await transport({ operation: "shopify-stores" });
+  if (!object(data) || !Array.isArray(data.stores) || data.stores.length > 10000 ||
+      !data.stores.every((store) => typeof store === "string" && /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(store))) {
+    throw new CatalogError("Supplier feed returned an invalid approved store list.");
+  }
+  return [...new Set(data.stores as string[])];
+}
+
 const CATEGORY_PAGE_LIMIT = 40;
 const CATEGORY_CACHE_MS = 5 * 60 * 1000;
 let categoryCache: { at: number; categories: Category[] } | null = null;
