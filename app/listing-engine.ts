@@ -165,6 +165,18 @@ export function supplierVariantIds(input: Payload): string[] {
   }
   return ids as string[];
 }
+// A retailer may delete variants they don't sell from a listing the app created. When every remaining
+// variant still carries its supplier identity, the listing is matched against just those variants;
+// the rest are left out and never re-added. Returns null when nothing is missing or identities don't line up.
+export function listedVariants(snapshot: ListingSnapshot, input: Payload): { keep: number[]; missing: string[] } | null {
+  const ids = supplierVariantIds(input);
+  if (snapshot.variants.length >= ids.length) return null;
+  const listed = snapshot.variants.map((variant) => variant.supplierId?.value);
+  if (!listed.every((id) => id && ids.includes(id)) || new Set(listed).size !== listed.length) return null;
+  const keep = ids.flatMap((id, index) => listed.includes(id) ? [index] : []);
+  const missing = ids.flatMap((id, index) => listed.includes(id) ? [] : [input.variants[index].sku.trim() || `supplier variant ${id}`]);
+  return { keep, missing };
+}
 export function matchListingVariants(snapshot: ListingSnapshot, input: Payload, explicitLink: boolean): string[] {
   const ids = supplierVariantIds(input);
   if (snapshot.variants.length !== ids.length) throw new ImportError("Supplier and Shopify variant sets differ. Reconnect to a listing with an exact complete variant match.");

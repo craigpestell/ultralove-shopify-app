@@ -4,7 +4,7 @@ import { parseFragment, serialize } from "parse5";
 import { MAX_PREVIEW_AGE, matchProduct } from "../app/import-engine.ts";
 import { defaultListingPolicy } from "../app/listing-policy.ts";
 import {
-  applyListing, assertLinkOwnership, listingChanges, listingSnapshot, matchListingVariants,
+  applyListing, assertLinkOwnership, listedVariants, listingChanges, listingSnapshot, matchListingVariants,
   LISTING_QUERY, LISTING_UPDATE_MUTATION, LISTING_PRICES_MUTATION, LISTING_METADATA_MUTATION,
 } from "../app/listing-engine.ts";
 import { listingApi, retailerListing, supplierInput, runId } from "./fixtures/listing-fixture.mjs";
@@ -236,4 +236,35 @@ test("multi-page variant snapshots refresh 501 prices in bounded 250/250/1 batch
   assert.deepEqual(mock.state.calls.filter((call) => call.query === LISTING_PRICES_MUTATION).map((call) => call.variables.variants.length), [250, 250, 1]);
   assert.deepEqual(mock.state.product.variants.map((variant) => variant.id), variantIds);
   assert.ok(mock.state.product.variants.every((variant) => variant.price === "15.63"));
+});
+
+test("a listing missing variants the retailer deleted matches the variants still on it", () => {
+  const input = structuredClone(supplierInput);
+  const variant = (id, sku) => ({ ...structuredClone(supplierInput.variants[0]), sku,
+    metafields: [{ namespace: "ultralove_catalog", key: "supplier_id", value: id }] });
+  input.variants = [variant("101", "SKU-RED"), variant("102", "SKU-BLUE"), variant("103", "")];
+  const listing = retailerListing();
+  listing.variants = [{ ...listing.variants[0], id: "gid://shopify/ProductVariant/12", sku: "SKU-BLUE", supplierId: { value: "102", compareDigest: "d" } }];
+  const listed = listedVariants(listing, input);
+  assert.deepEqual(listed, { keep: [1], missing: ["SKU-RED", "supplier variant 103"] });
+  const trimmed = { ...input, variants: listed.keep.map((index) => input.variants[index]) };
+  assert.deepEqual(matchListingVariants(listing, trimmed, false), ["gid://shopify/ProductVariant/12"]);
+  assert.equal(listedVariants(retailerListing(), supplierInput), null, "nothing missing");
+  // Without supplier identities on every remaining variant there is nothing safe to match against.
+  listing.variants[0].supplierId = null;
+  assert.equal(listedVariants(listing, input), null);
+  listing.variants[0].supplierId = { value: "999", compareDigest: "d" };
+  assert.equal(listedVariants(listing, input), null);
+});
+test("a price update reaches the variants still on the listing and leaves deleted ones deleted", async () => {
+  const deletedVariant = { ...structuredClone(supplierInput.variants[0]), sku: "SKU-GONE", price: "99.00",
+    metafields: [{ namespace: "ultralove_catalog", key: "supplier_id", value: "101" }] };
+  const input = { ...supplierInput, variants: [supplierInput.variants[0], deletedVariant] };
+  const mock = listingApi();
+  const listed = listedVariants(mock.state.product, input);
+  assert.deepEqual(listed, { keep: [0], missing: ["SKU-GONE"] });
+  const review = await reviewed(mock, { ...defaultListingPolicy(), mode: "UPDATE", prices: true }, "UPDATE",
+    { ...input, variants: listed.keep.map((index) => input.variants[index]) });
+  assert.equal((await review.run()).status, "UPDATED");
+  assert.deepEqual(mock.state.product.variants.map((variant) => [variant.sku, variant.price]), [["SKU-100", "15.63"]]);
 });

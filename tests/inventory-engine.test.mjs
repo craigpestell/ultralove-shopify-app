@@ -64,6 +64,21 @@ test("a wholesale-only variant (a Tester beside retail colours) keeps zero stock
     assert.throws(() => inventoryFeed({ ...source, inventory: [{ ...stock, wholesale_only }] }, 100, null));
   }
 });
+test("a variant the retailer deleted in Shopify stays deleted while the remaining variants keep syncing", () => {
+  const second = { ...current[0], sourceId: 102, variantId: "gid://shopify/ProductVariant/102", inventoryItemId: "gid://shopify/InventoryItem/102", committed: 0 };
+  const saved = mappings([...current, second]);
+  assert.deepEqual(verifyMappings(saved, current), [102]);
+  assert.deepEqual(verifyMappings(saved, [...current, second]), []);
+  const feed = inventoryFeed({ ...source, source_ids: [101, 102], inventory: [stock, { ...stock, id: 102, stock_owner_id: 102 }] }, 100, null);
+  const plan = stockPlan(current, feed, location, [102]);
+  assert.deepEqual(plan.warnings, [], "a deleted variant is not a new supplier variant to review");
+  assert.deepEqual(plan.desired.map((item) => item.quantity), [7]);
+  assert.match(stockPlan(current, feed, location).warnings.join(" "), /New supplier variants/);
+  // Anything other than a deletion is still a change that pauses sync.
+  const added = { ...second, sourceId: 103, variantId: "gid://shopify/ProductVariant/103", inventoryItemId: "gid://shopify/InventoryItem/103" };
+  assert.throws(() => verifyMappings(saved, [...current, added]), /identities changed/);
+  assert.throws(() => verifyMappings(saved, [{ ...second, variantId: "gid://shopify/ProductVariant/999" }]), /identities changed/);
+});
 test("malformed stock, identities and checkpoints fail explicitly instead of implying withdrawal", () => {
   for (const change of [
     { cursor: -1 }, { parent_id: 999 }, { inventory: [{ ...stock, stock_quantity: 1.5 }] },
