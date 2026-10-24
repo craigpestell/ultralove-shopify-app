@@ -61,7 +61,10 @@ try {
             $result = array(
                 'ids' => array_column( $parents, 'id' ),
                 'products' => array_map( static fn( $product ) => array(
-                    'id' => $product['id'], 'name' => $product['name'], 'sku' => $product['sku'],
+                    'id' => $product['id'],
+                    // The SKU has its own column; show the cleaned name when the feed has one (feed 1.3+).
+                    'name' => is_string( $product['clean_name'] ?? null ) && trim( $product['clean_name'] ) !== '' ? $product['clean_name'] : $product['name'],
+                    'sku' => $product['sku'],
                     'price' => $product['price'], 'type' => $product['type'],
                     // Feed 1.3: testers, displays and other store-only products; older feeds omit it.
                     'wholesale_only' => ( $product['wholesale_only'] ?? false ) === true,

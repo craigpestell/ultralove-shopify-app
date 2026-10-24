@@ -122,7 +122,10 @@ export async function productsPage(filters: object, transport: Transport = sshTr
       };
     });
     return {
-      id: Number(record.id), parent_id: 0, name: record.name, sku: record.sku, type: record.type,
+      id: Number(record.id), parent_id: 0,
+      // The SKU has its own column, so list the feed's cleaned name when it has one.
+      name: typeof record.clean_name === "string" && record.clean_name.trim() ? record.clean_name : record.name,
+      sku: record.sku, type: record.type,
       price: record.price, currency: record.currency, manage_stock: record.manage_stock,
       stock_quantity: record.stock_quantity, stock_owner_id: record.stock_owner_id === null ? null : Number(record.stock_owner_id),
       images,

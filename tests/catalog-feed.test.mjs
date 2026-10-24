@@ -22,6 +22,15 @@ test("bounded browsing forwards only a product operation and preserves zero/unkn
   assert.equal(result.products[0].price, "12.50");
 });
 
+test("catalog browsing lists the cleaned name when the feed has one, else the name", async () => {
+  const result = await productsPage({}, async () => page([
+    { ...product, name: "SKU-1 Supplier product", clean_name: "Supplier product" },
+    { ...product, id: 2, name: "SKU-2 Other", clean_name: "  " },
+    { ...product, id: 3, name: "SKU-3 Third" },
+  ]));
+  assert.deepEqual(result.products.map((p) => p.name), ["Supplier product", "SKU-2 Other", "SKU-3 Third"]);
+});
+
 test("unbounded, variant-only and invalid product responses fail explicitly", async () => {
   for (const products of [
     Array.from({length: 51}, () => product),
