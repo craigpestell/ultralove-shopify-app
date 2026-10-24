@@ -1,0 +1,69 @@
+# Custom-distribution copy of UltraLove Catalog for the Source Adult pilot (source-adult.myshopify.com).
+# Served by the lab host as a second instance (ops/add-store-app.sh). Put the Source Adult app's
+# Client ID below, then release this configuration with: shopify app deploy --config source-adult
+client_id = ""
+name = "UltraLove Catalog"
+application_url = "https://shopify-source-adult.104-248-211-144.sslip.io"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = false
+
+[auth]
+redirect_urls = [ "https://shopify-source-adult.104-248-211-144.sslip.io/auth/callback" ]
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "write_products,write_inventory,read_locations,read_publications,write_publications"
+
+[webhooks]
+api_version = "2026-10"
+
+  # Handled by: /app/routes/webhooks.app.uninstalled.tsx
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = ["app/uninstalled"]
+
+  # Handled by: /app/routes/webhooks.app.scopes_update.tsx
+  [[webhooks.subscriptions]]
+  topics = [ "app/scopes_update" ]
+  uri = "/webhooks/app/scopes_update"
+
+  [[webhooks.subscriptions]]
+  topics = ["products/delete"]
+  uri = "/webhooks/products/delete"
+
+  # Mandatory privacy topics for public apps.
+  # Handled by: /app/routes/webhooks.compliance.tsx
+  # See: https://shopify.dev/docs/apps/build/privacy-law-compliance
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/compliance"
+  compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+
+# Only receive Events when a variant's price changes and the product status is active.
+# See: https://shopify.dev/docs/apps/build/events-webhooks
+# [events]
+# api_version = "2026-10"
+
+#   [[events.subscription]]
+#   handle = "product-price-change"
+#   topic = "Product"
+#   actions = ["update"]
+#   triggers = ["product.variants.price", "product.variants.compareAtPrice"]
+#   uri = "/webhooks/products/update"
+#   query = """
+#   query product_variant_price_change($productId: ID!, $variantsId: ID!) {
+#     product(id: $productId) {
+#       id
+#       title
+#       status
+#     }
+#     productVariant(id: $variantsId) {
+#       id
+#       title
+#       price
+#       compareAtPrice
+#     }
+#   }
+#   """
+#   query_filter = "product.status:'ACTIVE'"

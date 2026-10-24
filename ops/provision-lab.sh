@@ -97,6 +97,14 @@ chmod -R go-w "$directory"
 if systemctl is-active --quiet ultralove-shopify-imports; then
     systemctl stop ultralove-shopify-imports
 fi
+# Store apps added by add-store-app.sh run the same release, so their workers stop too.
+stores=()
+for environment in /etc/ultralove-shopify/stores/*.env; do
+    [[ -f "$environment" ]] && stores+=("$(basename "$environment" .env)")
+done
+for name in "${stores[@]}"; do
+    systemctl stop "ultralove-shopify-store-imports@$name"
+done
 
 if [[ -L /srv/ultralove-shopify/current ]]; then
     ln -sfn "$(readlink /srv/ultralove-shopify/current)" /srv/ultralove-shopify/previous
@@ -104,6 +112,8 @@ fi
 ln -sfn "$directory" /srv/ultralove-shopify/current
 install -m 644 "$directory/ops/ultralove-shopify.service" /etc/systemd/system/ultralove-shopify.service
 install -m 644 "$directory/ops/ultralove-shopify-imports.service" /etc/systemd/system/ultralove-shopify-imports.service
+install -m 644 "$directory/ops/ultralove-shopify-store@.service" /etc/systemd/system/ultralove-shopify-store@.service
+install -m 644 "$directory/ops/ultralove-shopify-store-imports@.service" /etc/systemd/system/ultralove-shopify-store-imports@.service
 install -m 755 "$directory/ops/lab-pull-deploy.sh" /usr/local/sbin/ultralove-shopify-deploy
 install -m 644 "$directory/ops/ultralove-shopify-deploy.service" /etc/systemd/system/ultralove-shopify-deploy.service
 install -m 644 "$directory/ops/ultralove-shopify-deploy.timer" /etc/systemd/system/ultralove-shopify-deploy.timer
@@ -129,6 +139,26 @@ for attempt in {1..30}; do
     sleep 1
 done
 [[ "$ready" == true ]] || { echo "App readiness check failed" >&2; exit 1; }
+for name in "${stores[@]}"; do
+    database="/var/lib/ultralove-shopify-stores/$name/sessions.sqlite"
+    if [[ -f "$database" ]]; then
+        DATABASE="$database" NAME="$name" python3 - <<'PY'
+import os, sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+destination = Path("/srv/ultralove-shopify/backups") / (os.environ["NAME"] + "-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + ".sqlite")
+destination.parent.mkdir(mode=0o700, exist_ok=True)
+with sqlite3.connect(f"file:{os.environ['DATABASE']}?mode=ro", uri=True) as source:
+    with sqlite3.connect(destination) as backup:
+        source.backup(backup)
+destination.chmod(0o600)
+PY
+    fi
+    runuser -u ultralove-shopify -- env PATH="$PATH" DATABASE_URL="file:$database" \
+        bash -c 'cd "$1" && node_modules/.bin/prisma migrate deploy' bash "$directory"
+    systemctl restart "ultralove-shopify-store@$name" "ultralove-shopify-store-imports@$name"
+    echo "Store app $name restarted on release $release."
+done
 
 if [[ ! -e /etc/nginx/sites-available/shopify-lab ]]; then
     install -m 644 "$directory/ops/shopify-lab.nginx.conf" /etc/nginx/sites-available/shopify-lab

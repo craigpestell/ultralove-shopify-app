@@ -1,0 +1,27 @@
+[Unit]
+Description=UltraLove Catalog import and inventory worker for the %i store app
+After=network.target ultralove-shopify-store@%i.service
+
+[Service]
+Type=simple
+User=ultralove-shopify
+Group=ultralove-shopify
+WorkingDirectory=/srv/ultralove-shopify/current
+Environment=NODE_ENV=production
+Environment=PATH=/opt/ultralove-node/bin:/usr/bin:/bin
+EnvironmentFile=/etc/ultralove-shopify/stores/%i.env
+ExecStart=/usr/bin/flock -n /var/lib/ultralove-shopify-stores/%i/import-worker.lock /opt/ultralove-node/bin/node build/worker/worker.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=160
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ultralove-shopify-stores/%i
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

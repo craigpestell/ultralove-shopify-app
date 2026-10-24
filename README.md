@@ -26,6 +26,27 @@ stays in use. Deploy the matching `ops/catalog-proxy.php` and grant the feed acc
 their store domain, and the worker does no work for them. A store that loses approval keeps
 its data.
 
+### Pilot store apps (custom distribution)
+
+A live store can't install the public app until Shopify has reviewed it, so a pilot retailer gets
+its own custom-distribution app record, which installs on that one store with no review. The lab
+host runs it as a second instance of the same release, with its own port, database
+(`/var/lib/ultralove-shopify-stores/<name>/`), worker and HTTPS host
+(`shopify-<name>.104-248-211-144.sslip.io`). Every deploy migrates and restarts each instance.
+Source Adult is the first:
+
+1. In the Shopify Dev Dashboard, create an app named **UltraLove Catalog** and choose **Custom
+   distribution** for `source-adult.myshopify.com`.
+2. Put its Client ID in `shopify.app.source-adult.toml` and run
+   `shopify app deploy --config source-adult` to release the URLs, scopes and webhooks.
+3. On the lab host, save the Client ID and secret to
+   `/root/.ultralove-integration-lab/source-adult-client-id` and `-client-secret`, then run
+   `ops/add-store-app.sh source-adult 3101 source-adult.myshopify.com` from the current release.
+4. Copy the install link from the Dev Dashboard's distribution page and send it to the retailer.
+
+The instance approves its own store through `APPROVED_SHOPS`, and stores approved in WordPress
+also apply. It reads the same dev catalog as the lab.
+
 Release details, **Check now** and **Automatic updates** in Settings concern the whole app
 host, so only `OPERATOR_SHOP` (default: the integration lab) sees them. **Run inventory sync**
 is now per store (`ShopSettings`); migration `20261023230000_shop_settings` carries the lab's
