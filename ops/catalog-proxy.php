@@ -16,7 +16,7 @@ try {
     require '/var/www/html/wp-content/plugins/ultralove-shopify-supplier/includes/class-feed-client.php';
     $credentials = json_decode( file_get_contents( '/var/lib/ultralove-catalog-proxy/feed-client.json' ), true, 512, JSON_THROW_ON_ERROR );
     $transport = static function ( string $url, array $arguments ): array {
-        if ( ! preg_match( '~^http://localhost/wp-json/ultralove-feed/v1/(products|categories|inventory|changes)\?~', $url ) ) {
+        if ( ! preg_match( '~^http://localhost/wp-json/ultralove-feed/v1/(products|categories|inventory|changes|shopify-stores)(\?|$)~', $url ) ) {
             throw new RuntimeException( 'Unsupported supplier endpoint.' );
         }
         $headers = array();
@@ -67,6 +67,13 @@ try {
                     'wholesale_only' => ( $product['wholesale_only'] ?? false ) === true,
                 ), $parents ),
             );
+            break;
+        case 'shopify-stores':
+            // Feed 1.6: stores UltraLove approved for the Shopify app.
+            if ( ! method_exists( $client, 'shopify_stores' ) ) {
+                throw new RuntimeException( 'The approved Shopify store list is not provisioned.' );
+            }
+            $result = $client->shopify_stores();
             break;
         case 'inventory-sync':
             if ( ! method_exists( $client, 'inventory_state' ) ) {

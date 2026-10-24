@@ -21,15 +21,35 @@ test("app data is only keyed by exact myshopify.com domains", () => {
   }
 });
 
+const unread = () => ({ stores: null, nextReadAt: 0 });
+const offline = async () => { throw new Error("No supplier connection in tests"); };
+
 test("only listed stores are approved, and the lab stays approved by default", async () => {
-  assert.deepEqual(await approvedShops({}), [LAB_SHOP]);
-  assert.deepEqual(await approvedShops({ APPROVED_SHOPS: "  " }), [LAB_SHOP]);
+  assert.deepEqual(await approvedShops({}, offline, unread()), [LAB_SHOP]);
+  assert.deepEqual(await approvedShops({ APPROVED_SHOPS: "  " }, offline, unread()), [LAB_SHOP]);
   const env = { APPROVED_SHOPS: " Source-Adult.myshopify.com, ultralove.ca,another.myshopify.com ," };
-  assert.deepEqual(await approvedShops(env), ["source-adult.myshopify.com", "another.myshopify.com"], "invalid entries are dropped");
-  assert.equal(await isApprovedShop("source-adult.myshopify.com", env), true);
-  assert.equal(await isApprovedShop(LAB_SHOP, env), false, "an explicit list replaces the lab default");
-  assert.equal(await isApprovedShop("ultralove.ca", env), false);
-  assert.equal(await isApprovedShop(undefined, env), false);
+  assert.deepEqual(await approvedShops(env, offline, unread()), ["source-adult.myshopify.com", "another.myshopify.com"], "invalid entries are dropped");
+  assert.equal(await isApprovedShop("source-adult.myshopify.com", env, offline, unread()), true);
+  assert.equal(await isApprovedShop(LAB_SHOP, env, offline, unread()), false, "an explicit list replaces the lab default");
+  assert.equal(await isApprovedShop("ultralove.ca", env, offline, unread()), false);
+  assert.equal(await isApprovedShop(undefined, env, offline, unread()), false);
+});
+
+test("stores approved in WordPress are added, cached, and kept when a later read fails", async () => {
+  const cache = unread();
+  let reads = 0;
+  let answer = async () => { reads++; return ["retailer.myshopify.com", "bad.example"]; };
+  const read = () => answer();
+  assert.deepEqual(await approvedShops({}, read, cache), [LAB_SHOP, "retailer.myshopify.com"], "invalid WordPress entries are dropped");
+  assert.deepEqual(await approvedShops({}, read, cache), [LAB_SHOP, "retailer.myshopify.com"]);
+  assert.equal(reads, 1, "the list is read at most every five minutes");
+  cache.nextReadAt = 0;
+  answer = offline;
+  assert.deepEqual(await approvedShops({}, read, cache), [LAB_SHOP, "retailer.myshopify.com"], "a failed read keeps the last list");
+  assert.ok(cache.nextReadAt - Date.now() <= 60 * 1000, "a failed read retries within a minute");
+  cache.nextReadAt = 0;
+  answer = async () => [];
+  assert.equal(await isApprovedShop("retailer.myshopify.com", {}, read, cache), false, "withdrawing approval in WordPress takes effect");
 });
 
 test("only the operator store manages the app host", () => {

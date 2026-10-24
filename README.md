@@ -17,9 +17,14 @@ Any Shopify store can install the app, but only stores UltraLove approved can us
 `APPROVED_SHOPS` in `/etc/ultralove-shopify/app.env` is a comma-separated list of
 `.myshopify.com` domains (the app and the worker both read it; restart both after a change).
 When it is unset, only the integration lab is approved, so the lab keeps working unchanged.
-Other stores see a **Waiting for UltraLove approval** page showing their store domain, and
-the worker does no work for them. A store that loses approval keeps its data. The next step
-is to read this list from the WordPress feed plugin instead of the environment.
+Stores approved in WordPress are added to that list: the **Approved Shopify store** field on a
+retailer's profile, read through the supplier proxy's `shopify-stores` operation (feed 1.6,
+craigpestell/ultralove#445) at most every five minutes. If a read fails, the last list read
+stays in use. Deploy the matching `ops/catalog-proxy.php` and grant the feed account
+`ultralove_read_shopify_stores` (re-run `setup-shopify-feed.php`); until then only
+`APPROVED_SHOPS` applies. Other stores see a **Waiting for UltraLove approval** page showing
+their store domain, and the worker does no work for them. A store that loses approval keeps
+its data.
 
 Release details, **Check now** and **Automatic updates** in Settings concern the whole app
 host, so only `OPERATOR_SHOP` (default: the integration lab) sees them. **Run inventory sync**
